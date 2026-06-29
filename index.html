@@ -88,8 +88,8 @@ function jsonp(params){
   });
 }
 
-function onScan(text){
-  $("dbg").textContent='読取データ: '+text+'  (GTIN='+(extractGTIN(text)||'-')+')';
+function onScan(text, fmt){
+  $("dbg").textContent='読取'+(fmt?'['+fmt+']':'')+': '+text+'  GTIN='+(extractGTIN(text)||'-');
   const now=Date.now();
   if(text===lastCode && now-lastTime<1500)return;
   lastCode=text;lastTime=now;
@@ -107,10 +107,10 @@ async function loadDenpyo(qr){
   $("msg").innerHTML='商品のバーコードを順に読み取ってください';beep(true);flash("g");
 }
 
-function matchItem(code){
-  if(!data)return;
-  const gtin=extractGTIN(code);   // GS1-128/DataMatrix → 14桁GTIN
-  const bc=normBC(code);          // 素のJAN(EAN-13)スキャン用
+// コード文字列が明細のどれかに一致するか（純粋判定・副作用なし）。未充足を優先して返す。
+function findItem(code){
+  if(!data)return null;
+  const gtin=extractGTIN(code), bc=normBC(code);
   let hit=null;
   for(const it of data.items){
     if(!it.scannable)continue;
@@ -118,11 +118,18 @@ function matchItem(code){
     const m = (gtin && gtin===ig) || bc===ij || bc===ig
             || (ig && bc===ig.replace(/^0+/,'')) || (ij && bc===ij.replace(/^0+/,''));
     if(m){
-      const need=it.数量,got=scanned[it.商品cd+it.ロット]||0;
-      if(got<need){hit=it;break;} if(!hit)hit=it;
+      const need=it.数量, got=scanned[it.商品cd+it.ロット]||0;
+      if(got<need)return it;     // まだ足りないものを最優先
+      if(!hit)hit=it;
     }
   }
-  if(!hit){const shown=gtin||bc; $("msg").innerHTML='<span class="ng">⚠ この伝票に無い商品です ('+shown+')</span>';beep(false);flash("r");return;}
+  return hit;
+}
+
+function matchItem(code){
+  if(!data)return;
+  const hit=findItem(code);
+  if(!hit){const shown=extractGTIN(code)||normBC(code); $("msg").innerHTML='<span class="ng">⚠ この伝票に無い商品です ('+shown+')</span>';beep(false);flash("r");return;}
   const k=hit.商品cd+hit.ロット, need=hit.数量, got=scanned[k]||0;
   if(got>=need){$("msg").innerHTML='<span class="ng">⚠ '+hit.商品名+' は数量超過</span>';beep(false);flash("r");return;}
   scanned[k]=got+1;
@@ -179,19 +186,36 @@ async function startScan(){
 
 async function scanLoop(){
   if(!stream)return;
-  try{
-    let codes=await detector.detect(video);
-    if((!codes||!codes.length) && video.videoWidth){     // 見つからなければ色を反転して再検出
+  let codes=[];
+  try{ codes=(await detector.detect(video))||[]; }catch(e){}   // 通常検出（ハード支援・高速）
+  // 通常で読めない時だけ、縮小画像を反転して再検出（黒地白バー対応・負荷を最小化）
+  if(!codes.length && video.videoWidth){
+    try{
       const w=video.videoWidth, h=video.videoHeight;
-      cvs.width=w; cvs.height=h; cx.drawImage(video,0,0,w,h);
-      const im=cx.getImageData(0,0,w,h), d=im.data;
+      const sc=Math.min(1, 1100/w);                 // 最大幅1100pxに縮小して反転コストを削減
+      const sw=Math.round(w*sc), sh=Math.round(h*sc);
+      cvs.width=sw; cvs.height=sh; cx.drawImage(video,0,0,sw,sh);
+      const im=cx.getImageData(0,0,sw,sh), d=im.data;
       for(let i=0;i<d.length;i+=4){ d[i]=255-d[i]; d[i+1]=255-d[i+1]; d[i+2]=255-d[i+2]; }
       cx.putImageData(im,0,0);
-      codes=await detector.detect(cvs);
-    }
-    if(codes&&codes.length){ onScan(codes[0].rawValue); }
-  }catch(e){}
-  rafTimer=setTimeout(scanLoop,120);
+      codes=(await detector.detect(cvs))||[];
+    }catch(e){}
+  }
+  const best=pickBest(codes);
+  if(best) onScan(best.rawValue, best.format);
+  rafTimer=setTimeout(scanLoop, 60);
+}
+
+// 複数検出された中から最良を選ぶ：①明細に一致するもの最優先 ②形式の優先度(code_128>data_matrix>qr>ean)
+function pickBest(codes){
+  if(!codes||!codes.length)return null;
+  if(mode==="item" && data){
+    for(const c of codes){ if(findItem(c.rawValue)) return c; }   // 一致するものがあればそれを採用（誤読EANを無視）
+  } else if(mode==="denpyo"){
+    for(const c of codes){ if(c.format==="qr_code") return c; }    // 伝票はQR優先
+  }
+  const pri={code_128:5,data_matrix:4,qr_code:3,itf:2,ean_13:1,ean_8:1,code_39:1};
+  return codes.slice().sort((a,b)=>(pri[b.format]||0)-(pri[a.format]||0))[0];
 }
 
 function startH5(){
