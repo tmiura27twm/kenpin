@@ -40,6 +40,7 @@
   <button class="b-reset" id="btnReset">🔄 別の伝票</button>
 </div>
 <div id="msg"></div>
+<div id="dbg" style="padding:4px 14px;font-size:12px;color:#888;word-break:break-all;">読取データ: （まだ）</div>
 <div id="done">✅ 検品完了（全て一致）</div>
 <table id="tbl">
   <thead><tr><th>商品名</th><th>ロット</th><th class="q">数量</th><th class="q">読</th></tr></thead>
@@ -87,6 +88,7 @@ function jsonp(params){
 }
 
 function onScan(text){
+  $("dbg").textContent='読取データ: '+text+'  (GTIN='+(extractGTIN(text)||'-')+')';
   const now=Date.now();
   if(text===lastCode && now-lastTime<1500)return;
   lastCode=text;lastTime=now;
@@ -149,12 +151,17 @@ function checkDone(){
 
 function startScan(){
   if(scanner)return;
-  scanner=new Html5Qrcode("reader");
-  const cfg={fps:10,qrbox:{width:250,height:160},formatsToSupport:[
+  scanner=new Html5Qrcode("reader",{ formatsToSupport:[
     Html5QrcodeSupportedFormats.QR_CODE,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,
     Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.ITF,Html5QrcodeSupportedFormats.DATA_MATRIX,
-    Html5QrcodeSupportedFormats.CODE_39]};
-  scanner.start({facingMode:"environment"},cfg,onScan,()=>{})
+    Html5QrcodeSupportedFormats.CODE_39], experimentalFeatures:{useBarCodeDetectorIfSupported:true}, verbose:false });
+  // 1Dバーコードは横長・高解像度の方が読みやすい
+  const cfg={ fps:15,
+    qrbox:(w,h)=>{ const bw=Math.floor(Math.min(w,460)*0.92); return {width:bw, height:Math.floor(bw*0.5)}; },
+    aspectRatio:1.0,
+    videoConstraints:{ facingMode:"environment", width:{ideal:1920}, height:{ideal:1080},
+      advanced:[{focusMode:"continuous"}] } };
+  scanner.start({facingMode:"environment"}, cfg, onScan, ()=>{})
     .catch(e=>{$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e+'</span>';scanner=null;});
 }
 function stopScan(){if(scanner){scanner.stop().then(()=>{scanner.clear();scanner=null;}).catch(()=>{scanner=null;});}}
