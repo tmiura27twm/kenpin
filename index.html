@@ -65,6 +65,13 @@ function beep(ok){try{const c=new(window.AudioContext||window.webkitAudioContext
 function normBC(s){return String(s||"").replace(/[^0-9]/g,"");}
 function fmtDay(s){ if(!s)return""; const d=new Date(s); if(isNaN(d))return String(s);
   return d.getFullYear()+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+('0'+d.getDate()).slice(-2); }
+// GS1-128 / GS1 DataMatrix のスキャン文字列から AI(01)=GTIN(14桁) を抜き出す
+function extractGTIN(raw){
+  let s=String(raw).replace(/^\][A-Za-z0-9]/,'').replace(/[()]/g,'');  // 記号識別子と括弧を除去
+  if(s.startsWith('01') && /^\d{14}/.test(s.slice(2))) return s.slice(2,16);
+  const m=String(raw).match(/\(?01\)?(\d{14})/);                        // 括弧付き(01)... にも対応
+  return m?m[1]:null;
+}
 
 // JSONP（携帯回線でApps Scriptを呼ぶ・CORS不要）
 function jsonp(params){
@@ -99,17 +106,20 @@ async function loadDenpyo(qr){
 
 function matchItem(code){
   if(!data)return;
-  const bc=normBC(code);
+  const gtin=extractGTIN(code);   // GS1-128/DataMatrix → 14桁GTIN
+  const bc=normBC(code);          // 素のJAN(EAN-13)スキャン用
   let hit=null;
   for(const it of data.items){
     if(!it.scannable)continue;
-    const jan=normBC(it.jan),gtin=normBC(it.gtin);
-    if(bc&&(bc===jan||bc===gtin||(gtin&&bc===gtin.replace(/^0+/,''))||(jan&&bc===jan.replace(/^0+/,'')))){
+    const ij=normBC(it.jan), ig=normBC(it.gtin);
+    const m = (gtin && gtin===ig) || bc===ij || bc===ig
+            || (ig && bc===ig.replace(/^0+/,'')) || (ij && bc===ij.replace(/^0+/,''));
+    if(m){
       const need=it.数量,got=scanned[it.商品cd+it.ロット]||0;
       if(got<need){hit=it;break;} if(!hit)hit=it;
     }
   }
-  if(!hit){$("msg").innerHTML='<span class="ng">⚠ この伝票に無い商品です ('+bc+')</span>';beep(false);flash("r");return;}
+  if(!hit){const shown=gtin||bc; $("msg").innerHTML='<span class="ng">⚠ この伝票に無い商品です ('+shown+')</span>';beep(false);flash("r");return;}
   const k=hit.商品cd+hit.ロット, need=hit.数量, got=scanned[k]||0;
   if(got>=need){$("msg").innerHTML='<span class="ng">⚠ '+hit.商品名+' は数量超過</span>';beep(false);flash("r");return;}
   scanned[k]=got+1;
