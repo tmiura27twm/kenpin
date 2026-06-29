@@ -40,6 +40,9 @@
   <button class="b-stop" id="btnStop">⏸ 停止</button>
   <button class="b-reset" id="btnReset">🔄 別伝票</button>
 </div>
+<div id="zoomrow" style="display:none;padding:2px 14px 8px;">
+  🔍 ズーム <input type="range" id="zoom" style="width:calc(100% - 70px);vertical-align:middle;">
+</div>
 <div id="msg"></div>
 <div id="dbg" style="padding:4px 14px;font-size:12px;color:#888;word-break:break-all;">読取データ: （まだ）</div>
 <div id="done">✅ 検品完了（全て一致）</div>
@@ -176,6 +179,7 @@ async function startScan(){
       video=document.createElement('video'); video.setAttribute('playsinline','true'); video.muted=true;
       video.srcObject=stream; await video.play();
       const r=$("reader"); r.innerHTML=''; r.appendChild(video); video.style.width='100%';
+      setupZoom();
       scanLoop();
       return;
     }catch(e){ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;} }
@@ -209,13 +213,16 @@ async function scanLoop(){
 // 複数検出された中から最良を選ぶ：①明細に一致するもの最優先 ②形式の優先度(code_128>data_matrix>qr>ean)
 function pickBest(codes){
   if(!codes||!codes.length)return null;
+  const pri={code_128:5,data_matrix:4,itf:2,ean_13:1,ean_8:1,code_39:1};
   if(mode==="item" && data){
-    for(const c of codes){ if(findItem(c.rawValue)) return c; }   // 一致するものがあればそれを採用（誤読EANを無視）
-  } else if(mode==="denpyo"){
-    for(const c of codes){ if(c.format==="qr_code") return c; }    // 伝票はQR優先
+    const nonqr=codes.filter(c=>c.format!=="qr_code");   // 照合中は伝票QRを無視（ピコン防止）
+    if(!nonqr.length) return null;                       // QRしか映ってない→何もしない
+    for(const c of nonqr){ if(findItem(c.rawValue)) return c; }   // 一致を最優先（誤読EANを無視）
+    return nonqr.slice().sort((a,b)=>(pri[b.format]||0)-(pri[a.format]||0))[0];
   }
-  const pri={code_128:5,data_matrix:4,qr_code:3,itf:2,ean_13:1,ean_8:1,code_39:1};
-  return codes.slice().sort((a,b)=>(pri[b.format]||0)-(pri[a.format]||0))[0];
+  // 伝票モード：QRのみ受け付ける（商品バーコードでは伝票を開かない）
+  for(const c of codes){ if(c.format==="qr_code") return c; }
+  return null;
 }
 
 function startH5(){
@@ -232,8 +239,23 @@ function startH5(){
 
 function stopScan(){
   if(rafTimer){clearTimeout(rafTimer);rafTimer=null;}
-  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;track=null;torchOn=false;$("reader").innerHTML='';}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;track=null;torchOn=false;$("reader").innerHTML='';$("zoomrow").style.display='none';}
   if(scanner){scanner.stop().then(()=>{scanner.clear();scanner=null;}).catch(()=>{scanner=null;});}
+}
+
+function setupZoom(){
+  const row=$("zoomrow"), z=$("zoom");
+  try{
+    const caps=track.getCapabilities?track.getCapabilities():{};
+    if(caps.zoom && caps.zoom.max>caps.zoom.min){
+      z.min=caps.zoom.min; z.max=caps.zoom.max; z.step=caps.zoom.step||0.1;
+      z.value=caps.zoom.min;
+      row.style.display='block';
+      z.oninput=()=>{ track.applyConstraints({advanced:[{zoom:Number(z.value)}]}).catch(()=>{}); };
+      return;
+    }
+  }catch(e){}
+  row.style.display='none';   // ズーム非対応端末
 }
 
 async function toggleTorch(){
