@@ -35,9 +35,10 @@
 <div id="info">伝票QRを読み取ってください</div>
 <div id="reader"></div>
 <div class="btnrow">
-  <button class="b-scan" id="btnScan">📷 スキャン開始</button>
+  <button class="b-scan" id="btnScan">📷 開始</button>
+  <button class="b-stop" id="btnTorch">🔦 ライト</button>
   <button class="b-stop" id="btnStop">⏸ 停止</button>
-  <button class="b-reset" id="btnReset">🔄 別の伝票</button>
+  <button class="b-reset" id="btnReset">🔄 別伝票</button>
 </div>
 <div id="msg"></div>
 <div id="dbg" style="padding:4px 14px;font-size:12px;color:#888;word-break:break-all;">読取データ: （まだ）</div>
@@ -149,24 +150,80 @@ function checkDone(){
   if(all){beep(true);if(navigator.vibrate)navigator.vibrate([60,40,60,40,120]);}
 }
 
-function startScan(){
+// ===== スキャン：Android標準のBarcodeDetectorを優先（反転バーコードにも対応）=====
+let stream=null, video=null, detector=null, rafTimer=null, track=null, torchOn=false;
+const cvs=document.createElement('canvas'), cx=cvs.getContext('2d',{willReadFrequently:true});
+
+async function startScan(){
+  if(stream)return;
+  // ① Android Chrome 等：ネイティブBarcodeDetector
+  if('BarcodeDetector' in window){
+    try{
+      const sup=await BarcodeDetector.getSupportedFormats();
+      const want=['qr_code','code_128','ean_13','ean_8','itf','data_matrix','code_39','codabar'];
+      detector=new BarcodeDetector({formats:sup.filter(f=>want.includes(f))});
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',
+        width:{ideal:1920},height:{ideal:1080}}});
+      track=stream.getVideoTracks()[0];
+      try{ await track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch(e){}
+      video=document.createElement('video'); video.setAttribute('playsinline','true'); video.muted=true;
+      video.srcObject=stream; await video.play();
+      const r=$("reader"); r.innerHTML=''; r.appendChild(video); video.style.width='100%';
+      scanLoop();
+      return;
+    }catch(e){ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;} }
+  }
+  // ② フォールバック（iOS Safari等）：html5-qrcode
+  startH5();
+}
+
+async function scanLoop(){
+  if(!stream)return;
+  try{
+    let codes=await detector.detect(video);
+    if((!codes||!codes.length) && video.videoWidth){     // 見つからなければ色を反転して再検出
+      const w=video.videoWidth, h=video.videoHeight;
+      cvs.width=w; cvs.height=h; cx.drawImage(video,0,0,w,h);
+      const im=cx.getImageData(0,0,w,h), d=im.data;
+      for(let i=0;i<d.length;i+=4){ d[i]=255-d[i]; d[i+1]=255-d[i+1]; d[i+2]=255-d[i+2]; }
+      cx.putImageData(im,0,0);
+      codes=await detector.detect(cvs);
+    }
+    if(codes&&codes.length){ onScan(codes[0].rawValue); }
+  }catch(e){}
+  rafTimer=setTimeout(scanLoop,120);
+}
+
+function startH5(){
   if(scanner)return;
   scanner=new Html5Qrcode("reader",{ formatsToSupport:[
     Html5QrcodeSupportedFormats.QR_CODE,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,
     Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.ITF,Html5QrcodeSupportedFormats.DATA_MATRIX,
-    Html5QrcodeSupportedFormats.CODE_39], experimentalFeatures:{useBarCodeDetectorIfSupported:true}, verbose:false });
-  // 1Dバーコードは横長・高解像度の方が読みやすい
-  const cfg={ fps:15,
-    qrbox:(w,h)=>{ const bw=Math.floor(Math.min(w,460)*0.92); return {width:bw, height:Math.floor(bw*0.5)}; },
-    aspectRatio:1.0,
-    videoConstraints:{ facingMode:"environment", width:{ideal:1920}, height:{ideal:1080},
-      advanced:[{focusMode:"continuous"}] } };
-  scanner.start({facingMode:"environment"}, cfg, onScan, ()=>{})
+    Html5QrcodeSupportedFormats.CODE_39], experimentalFeatures:{useBarCodeDetectorIfSupported:true} });
+  scanner.start({facingMode:"environment"},
+    { fps:15, videoConstraints:{ facingMode:"environment", width:{ideal:1920}, height:{ideal:1080} } },
+    onScan, ()=>{})
     .catch(e=>{$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e+'</span>';scanner=null;});
 }
-function stopScan(){if(scanner){scanner.stop().then(()=>{scanner.clear();scanner=null;}).catch(()=>{scanner=null;});}}
+
+function stopScan(){
+  if(rafTimer){clearTimeout(rafTimer);rafTimer=null;}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;track=null;torchOn=false;$("reader").innerHTML='';}
+  if(scanner){scanner.stop().then(()=>{scanner.clear();scanner=null;}).catch(()=>{scanner=null;});}
+}
+
+async function toggleTorch(){
+  if(!track){ $("msg").innerHTML='<span class="ng">先に「開始」を押してください</span>'; return; }
+  try{
+    const caps=track.getCapabilities?track.getCapabilities():{};
+    if(!caps.torch){ $("msg").innerHTML='<span class="ng">この端末はライト非対応</span>'; return; }
+    torchOn=!torchOn;
+    await track.applyConstraints({advanced:[{torch:torchOn}]});
+  }catch(e){ $("msg").innerHTML='<span class="ng">ライト切替失敗</span>'; }
+}
 
 $("btnScan").onclick=startScan;
+$("btnTorch").onclick=toggleTorch;
 $("btnStop").onclick=stopScan;
 $("btnReset").onclick=()=>{data=null;scanned={};mode="denpyo";lastCode="";
   $("info").textContent="伝票QRを読み取ってください";$("tb").innerHTML="";$("done").style.display="none";$("msg").textContent="";};
