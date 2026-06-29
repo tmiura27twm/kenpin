@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>検品確認</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;font-family:system-ui,sans-serif;background:#f4f5f7;color:#222;}
+  header{background:#1565c0;color:#fff;padding:10px 14px;font-size:18px;font-weight:bold;position:sticky;top:0;z-index:10;}
+  #info{padding:8px 14px;background:#fff;border-bottom:1px solid #ddd;font-size:14px;}
+  #info b{font-size:16px;}
+  #reader{width:100%;max-width:480px;margin:0 auto;}
+  .btnrow{display:flex;gap:8px;padding:10px 14px;}
+  button{flex:1;padding:14px;font-size:16px;border:0;border-radius:8px;color:#fff;font-weight:bold;}
+  .b-scan{background:#2e7d32;}.b-stop{background:#757575;}.b-reset{background:#c62828;}
+  #msg{padding:8px 14px;font-size:15px;min-height:22px;}
+  .ok{color:#2e7d32;font-weight:bold;}.ng{color:#c62828;font-weight:bold;}
+  table{width:100%;border-collapse:collapse;background:#fff;}
+  th,td{padding:8px 6px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}
+  th{background:#eceff1;position:sticky;top:0;}
+  td.q{text-align:center;white-space:nowrap;font-weight:bold;}
+  tr.done{background:#e8f5e9;}tr.done td{color:#558b5a;}
+  tr.skip{background:#fafafa;color:#999;}
+  .pill{display:inline-block;min-width:46px;text-align:center;padding:2px 6px;border-radius:12px;font-size:13px;}
+  .pill.g{background:#2e7d32;color:#fff;}.pill.y{background:#ffd54f;color:#333;}
+  #done{display:none;padding:16px;margin:10px 14px;background:#2e7d32;color:#fff;border-radius:10px;font-size:20px;text-align:center;font-weight:bold;}
+  #flash{position:fixed;inset:0;pointer-events:none;opacity:0;z-index:50;}
+  #flash.g{background:#4caf50;}#flash.r{background:#f44336;}
+</style>
+</head>
+<body>
+<header>📦 検品確認</header>
+<div id="info">伝票QRを読み取ってください</div>
+<div id="reader"></div>
+<div class="btnrow">
+  <button class="b-scan" id="btnScan">📷 スキャン開始</button>
+  <button class="b-stop" id="btnStop">⏸ 停止</button>
+  <button class="b-reset" id="btnReset">🔄 別の伝票</button>
+</div>
+<div id="msg"></div>
+<div id="done">✅ 検品完了（全て一致）</div>
+<table id="tbl">
+  <thead><tr><th>商品名</th><th>ロット</th><th class="q">数量</th><th class="q">読</th></tr></thead>
+  <tbody id="tb"></tbody>
+</table>
+<div id="flash"></div>
+
+<script>
+// ▼▼▼ ここにApps ScriptのウェブアプリURL（/exec）を貼る ▼▼▼
+const APPS_URL = "ここにApps_ScriptのexecURLを貼る";
+const ACCESS_PIN = "";   // Apps Script側でPINを設定した場合のみ入力
+// ▲▲▲
+
+let mode="denpyo", data=null, scanned={}, scanner=null, lastCode="", lastTime=0;
+const $=id=>document.getElementById(id);
+
+function flash(c){const f=$("flash");f.className=c;f.style.transition="none";f.style.opacity="0.55";
+  setTimeout(()=>{f.style.transition="opacity .4s";f.style.opacity="0";},30);
+  if(navigator.vibrate)navigator.vibrate(c==="g"?60:[80,50,80]);}
+function beep(ok){try{const c=new(window.AudioContext||window.webkitAudioContext)();const o=c.createOscillator(),g=c.createGain();
+  o.connect(g);g.connect(c.destination);o.frequency.value=ok?880:220;o.start();
+  g.gain.setValueAtTime(0.2,c.currentTime);g.gain.exponentialRampToValueAtTime(0.001,c.currentTime+0.2);o.stop(c.currentTime+0.2);}catch(e){}}
+function normBC(s){return String(s||"").replace(/[^0-9]/g,"");}
+
+// JSONP（携帯回線でApps Scriptを呼ぶ・CORS不要）
+function jsonp(params){
+  return new Promise((resolve)=>{
+    const name='cb'+Date.now()+Math.floor(Math.random()*1000);
+    window[name]=function(d){ delete window[name]; s.remove(); resolve(d); };
+    const s=document.createElement('script');
+    const q=Object.entries(params).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');
+    s.src=APPS_URL+'?'+q+'&callback='+name;
+    s.onerror=()=>{ delete window[name]; s.remove(); resolve({ok:false,error:'通信エラー'}); };
+    document.body.appendChild(s);
+  });
+}
+
+function onScan(text){
+  const now=Date.now();
+  if(text===lastCode && now-lastTime<1500)return;
+  lastCode=text;lastTime=now;
+  if(mode==="denpyo")loadDenpyo(text); else matchItem(text);
+}
+
+async function loadDenpyo(qr){
+  $("msg").textContent="読込中...";
+  const params={denpyo:qr}; if(ACCESS_PIN)params.pin=ACCESS_PIN;
+  const j=await jsonp(params);
+  if(!j.ok){$("msg").innerHTML='<span class="ng">'+(j.error||"エラー")+'</span>';beep(false);flash("r");return;}
+  data=j;scanned={};
+  $("info").innerHTML='伝票 <b>'+j.取引NO+'</b>　'+(j.得意先||"")+'　'+(j.取引日||"");
+  render();mode="item";
+  $("msg").innerHTML='商品のバーコードを順に読み取ってください';beep(true);flash("g");
+}
+
+function matchItem(code){
+  if(!data)return;
+  const bc=normBC(code);
+  let hit=null;
+  for(const it of data.items){
+    if(!it.scannable)continue;
+    const jan=normBC(it.jan),gtin=normBC(it.gtin);
+    if(bc&&(bc===jan||bc===gtin||(gtin&&bc===gtin.replace(/^0+/,''))||(jan&&bc===jan.replace(/^0+/,'')))){
+      const need=it.数量,got=scanned[it.商品cd+it.ロット]||0;
+      if(got<need){hit=it;break;} if(!hit)hit=it;
+    }
+  }
+  if(!hit){$("msg").innerHTML='<span class="ng">⚠ この伝票に無い商品です ('+bc+')</span>';beep(false);flash("r");return;}
+  const k=hit.商品cd+hit.ロット, need=hit.数量, got=scanned[k]||0;
+  if(got>=need){$("msg").innerHTML='<span class="ng">⚠ '+hit.商品名+' は数量超過</span>';beep(false);flash("r");return;}
+  scanned[k]=got+1;
+  $("msg").innerHTML='<span class="ok">✓ '+hit.商品名+'</span>';beep(true);flash("g");
+  render();checkDone();
+}
+
+function render(){
+  if(!data){$("tb").innerHTML="";return;}
+  let html="";
+  for(const it of data.items){
+    const k=it.商品cd+it.ロット, need=it.数量, got=scanned[k]||0;
+    let cls="",pill;
+    if(!it.scannable){cls="skip";pill='<span class="pill">－</span>';}
+    else if(got>=need){cls="done";pill='<span class="pill g">'+got+'/'+need+'</span>';}
+    else{pill='<span class="pill y">'+got+'/'+need+'</span>';}
+    html+='<tr class="'+cls+'"><td>'+it.商品名+'</td><td>'+it.ロット+'</td><td class="q">'+need+'</td><td class="q">'+pill+'</td></tr>';
+  }
+  $("tb").innerHTML=html;
+}
+
+function checkDone(){
+  const all=data.items.filter(it=>it.scannable).every(it=>(scanned[it.商品cd+it.ロット]||0)>=it.数量);
+  $("done").style.display=all?"block":"none";
+  if(all){beep(true);if(navigator.vibrate)navigator.vibrate([60,40,60,40,120]);}
+}
+
+function startScan(){
+  if(scanner)return;
+  scanner=new Html5Qrcode("reader");
+  const cfg={fps:10,qrbox:{width:250,height:160},formatsToSupport:[
+    Html5QrcodeSupportedFormats.QR_CODE,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,
+    Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.ITF,Html5QrcodeSupportedFormats.DATA_MATRIX,
+    Html5QrcodeSupportedFormats.CODE_39]};
+  scanner.start({facingMode:"environment"},cfg,onScan,()=>{})
+    .catch(e=>{$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e+'</span>';scanner=null;});
+}
+function stopScan(){if(scanner){scanner.stop().then(()=>{scanner.clear();scanner=null;}).catch(()=>{scanner=null;});}}
+
+$("btnScan").onclick=startScan;
+$("btnStop").onclick=stopScan;
+$("btnReset").onclick=()=>{data=null;scanned={};mode="denpyo";lastCode="";
+  $("info").textContent="伝票QRを読み取ってください";$("tb").innerHTML="";$("done").style.display="none";$("msg").textContent="";};
+</script>
+</body>
+</html>
