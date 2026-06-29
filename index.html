@@ -49,7 +49,7 @@
 
 <script>
 // ▼▼▼ ここにApps ScriptのウェブアプリURL（/exec）を貼る ▼▼▼
-const APPS_URL = "ここにApps_ScriptのexecURLを貼る";
+const APPS_URL = "https://script.google.com/macros/s/AKfycbxe7-GFzt6NF3TzfaIOfM-JM3YpWthCLMwbaF22KPBB7vbXmuOd-dRGYMikTxPqatMc/exec";
 const ACCESS_PIN = "";   // Apps Script側でPINを設定した場合のみ入力
 // ▲▲▲
 
@@ -63,6 +63,8 @@ function beep(ok){try{const c=new(window.AudioContext||window.webkitAudioContext
   o.connect(g);g.connect(c.destination);o.frequency.value=ok?880:220;o.start();
   g.gain.setValueAtTime(0.2,c.currentTime);g.gain.exponentialRampToValueAtTime(0.001,c.currentTime+0.2);o.stop(c.currentTime+0.2);}catch(e){}}
 function normBC(s){return String(s||"").replace(/[^0-9]/g,"");}
+function fmtDay(s){ if(!s)return""; const d=new Date(s); if(isNaN(d))return String(s);
+  return d.getFullYear()+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+('0'+d.getDate()).slice(-2); }
 
 // JSONP（携帯回線でApps Scriptを呼ぶ・CORS不要）
 function jsonp(params){
@@ -90,7 +92,7 @@ async function loadDenpyo(qr){
   const j=await jsonp(params);
   if(!j.ok){$("msg").innerHTML='<span class="ng">'+(j.error||"エラー")+'</span>';beep(false);flash("r");return;}
   data=j;scanned={};
-  $("info").innerHTML='伝票 <b>'+j.取引NO+'</b>　'+(j.得意先||"")+'　'+(j.取引日||"");
+  $("info").innerHTML='伝票 <b>'+j.取引NO+'</b>　'+(j.得意先||"")+'　'+fmtDay(j.取引日);
   render();mode="item";
   $("msg").innerHTML='商品のバーコードを順に読み取ってください';beep(true);flash("g");
 }
