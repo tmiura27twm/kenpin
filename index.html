@@ -46,6 +46,11 @@
   td.r,th.r{text-align:right;}
   #flash{position:fixed;inset:0;pointer-events:none;opacity:0;z-index:50;}
   #flash.g{background:#4caf50;}#flash.r{background:#f44336;}
+  /* 在庫検索ローディング */
+  #loading{display:none;text-align:center;padding:48px 14px;}
+  .spinner{width:46px;height:46px;border:5px solid #cce8e3;border-top-color:#00695c;border-radius:50%;margin:0 auto;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  #stockErr{display:none;padding:18px 14px;color:#c62828;font-weight:bold;font-size:16px;}
 </style>
 </head>
 <body>
@@ -80,6 +85,8 @@
 
 <!-- 在庫検索の表示 -->
 <div id="stockResult" style="display:none;">
+  <div id="loading"><div class="spinner"></div><div style="margin-top:14px;font-size:16px;color:#00695c;font-weight:bold;">照会中...</div></div>
+  <div id="stockErr"></div>
   <button id="btnNext" style="display:none;width:calc(100% - 28px);margin:12px 14px;padding:16px;border:0;border-radius:10px;background:#00695c;color:#fff;font-size:18px;font-weight:bold;">🔄 次の商品をスキャン</button>
   <div class="card" id="card">
     <div class="hd"><span class="tot" id="tot"></span><div class="nm" id="nm"></div>
@@ -132,7 +139,7 @@ function openKenpin(){app="kenpin";mode="denpyo";data=null;scanned={};lastCode="
 function openStock(){app="stock";data=null;lastCode="";document.body.className="stockmode";
   $("title").textContent="🔍 在庫検索";$("btnHome").style.display="inline-block";$("btnReset").style.display="none";
   $("home").style.display="none";$("scan").style.display="block";$("kenpinResult").style.display="none";$("stockResult").style.display="block";
-  $("card").style.display="none";$("btnNext").style.display="none";$("msg").textContent="商品のバーコードを読み取ってください";
+  $("card").style.display="none";$("btnNext").style.display="none";$("loading").style.display="none";$("stockErr").style.display="none";$("msg").textContent="商品のバーコードを読み取ってください";
   startScan();}
 function goHome(){stopScan();app="home";lastCode="";document.body.className="";
   $("title").textContent="📋 メニュー";$("btnHome").style.display="none";
@@ -190,17 +197,19 @@ function checkDone(){
 
 /* ===== 在庫検索 ===== */
 async function lookupStock(code){
-  $("msg").textContent='照会中...';
+  // 読取→即カメラOFF→「照会中...」ローディング（待って感）。在庫検索は音・フラッシュ・バイブなし
+  stopScan();
+  $("scan").style.display="none";$("card").style.display="none";$("stockErr").style.display="none";$("btnNext").style.display="none";
+  $("loading").style.display="block";
   const p={stock:code}; if(ACCESS_PIN)p.pin=ACCESS_PIN;
   const j=await jsonp(p);
-  if(!j.ok){$("msg").innerHTML='<span class="ng">'+(j.error||'該当なし')+'</span>';flash("r");return;}  // エラー時はカメラ継続（音なし）
-  // 成功：カメラを止めて結果＋「次の商品」ボタンを表示（ループUX）。在庫検索は音なし（光のみ）
-  stopScan();
-  $("scan").style.display="none";
+  $("loading").style.display="none";
+  if(!j.ok){
+    $("stockErr").textContent='⚠ '+(j.error||'該当なし');$("stockErr").style.display="block";$("btnNext").style.display="block";return;
+  }
   $("nm").textContent=j.商品名;$("stana").textContent=j.棚番||'-';$("scd").textContent=j.商品CD;$("tot").textContent=j.在庫数+' 個';
   $("lots").innerHTML=(j.lots||[]).map(l=>'<tr><td>'+l.lot+'</td><td class="r"><b>'+l.qty+'</b></td><td>'+fmtExp(l.exp)+'</td></tr>').join('');
-  $("card").style.display='block';$("btnNext").style.display='block';
-  flash("g");}
+  $("card").style.display='block';$("btnNext").style.display='block';}
 
 /* ===== スキャンエンジン（BarcodeDetector優先・反転対応・ズーム/ライト）===== */
 let stream=null,video=null,detector=null,rafTimer=null,track=null,torchOn=false,scanner=null;
@@ -289,7 +298,7 @@ async function toggleTorch(){
 $("btnScan").onclick=startScan;
 $("btnTorch").onclick=toggleTorch;
 $("btnStop").onclick=stopScan;
-$("btnNext").onclick=()=>{$("card").style.display="none";$("btnNext").style.display="none";
+$("btnNext").onclick=()=>{$("card").style.display="none";$("btnNext").style.display="none";$("stockErr").style.display="none";$("loading").style.display="none";
   $("scan").style.display="block";$("msg").textContent="商品のバーコードを読み取ってください";lastCode="";startScan();};
 $("btnReset").onclick=()=>{data=null;scanned={};mode="denpyo";lastCode="";
   $("info").textContent="伝票QRを読み取ってください";$("tb").innerHTML="";$("done").style.display="none";$("msg").textContent="";};
