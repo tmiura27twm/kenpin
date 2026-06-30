@@ -3,271 +3,280 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>検品確認</title>
+<title>倉庫ツール</title>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   body{margin:0;font-family:system-ui,sans-serif;background:#f4f5f7;color:#222;}
-  header{background:#1565c0;color:#fff;padding:10px 14px;font-size:18px;font-weight:bold;position:sticky;top:0;z-index:10;}
-  #info{padding:8px 14px;background:#fff;border-bottom:1px solid #ddd;font-size:14px;}
-  #info b{font-size:16px;}
+  header{background:#37474f;color:#fff;padding:10px 14px;font-size:18px;font-weight:bold;position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;}
+  #btnHome{display:none;background:#546e7a;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:14px;font-weight:bold;}
+  /* メニュー */
+  #home{padding:24px 16px;}
+  .menu-btn{display:block;width:100%;margin:0 0 16px;padding:26px;border:0;border-radius:14px;color:#fff;font-size:24px;font-weight:bold;box-shadow:0 2px 6px rgba(0,0,0,.15);}
+  .menu-btn small{display:block;margin-top:6px;font-size:14px;font-weight:normal;opacity:.9;}
+  .menu-btn.kenpin{background:#1565c0;}
+  .menu-btn.stock{background:#00695c;}
+  /* スキャン共通 */
   #reader{width:100%;max-width:480px;margin:0 auto;}
   .btnrow{display:flex;gap:8px;padding:10px 14px;}
-  button{flex:1;padding:14px;font-size:16px;border:0;border-radius:8px;color:#fff;font-weight:bold;}
+  .btnrow button{flex:1;padding:14px;font-size:16px;border:0;border-radius:8px;color:#fff;font-weight:bold;}
   .b-scan{background:#2e7d32;}.b-stop{background:#757575;}.b-reset{background:#c62828;}
-  #msg{padding:8px 14px;font-size:15px;min-height:22px;}
+  #msg{padding:6px 14px;font-size:15px;min-height:20px;}
   .ok{color:#2e7d32;font-weight:bold;}.ng{color:#c62828;font-weight:bold;}
+  #dbg{padding:2px 14px;font-size:11px;color:#999;word-break:break-all;}
+  /* 検品 */
+  #info{padding:8px 14px;background:#fff;border-bottom:1px solid #ddd;font-size:14px;}
+  #info b{font-size:16px;}
   table{width:100%;border-collapse:collapse;background:#fff;}
   th,td{padding:8px 6px;border-bottom:1px solid #eee;font-size:14px;text-align:left;}
-  th{background:#eceff1;position:sticky;top:0;}
+  th{background:#eceff1;}
   td.q{text-align:center;white-space:nowrap;font-weight:bold;}
   tr.done{background:#e8f5e9;}tr.done td{color:#558b5a;}
   tr.skip{background:#fafafa;color:#999;}
   .pill{display:inline-block;min-width:46px;text-align:center;padding:2px 6px;border-radius:12px;font-size:13px;}
   .pill.g{background:#2e7d32;color:#fff;}.pill.y{background:#ffd54f;color:#333;}
   #done{display:none;padding:16px;margin:10px 14px;background:#2e7d32;color:#fff;border-radius:10px;font-size:20px;text-align:center;font-weight:bold;}
+  /* 在庫検索 */
+  .card{background:#fff;margin:8px 14px;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.12);overflow:hidden;display:none;}
+  .card .hd{padding:10px 14px;border-bottom:1px solid #eee;}
+  .nm{font-size:18px;font-weight:bold;}.sub{margin-top:4px;font-size:14px;color:#444;}
+  .tana{display:inline-block;background:#00695c;color:#fff;border-radius:6px;padding:2px 10px;font-weight:bold;font-size:16px;}
+  .tot{float:right;font-size:22px;font-weight:bold;color:#00695c;}
+  td.r,th.r{text-align:right;}
   #flash{position:fixed;inset:0;pointer-events:none;opacity:0;z-index:50;}
   #flash.g{background:#4caf50;}#flash.r{background:#f44336;}
 </style>
 </head>
 <body>
-<header>📦 検品確認</header>
-<div id="info">伝票QRを読み取ってください</div>
-<div id="reader"></div>
-<div class="btnrow">
-  <button class="b-scan" id="btnScan">📷 開始</button>
-  <button class="b-stop" id="btnTorch">🔦 ライト</button>
-  <button class="b-stop" id="btnStop">⏸ 停止</button>
-  <button class="b-reset" id="btnReset">🔄 別伝票</button>
+<header><span id="title">📋 メニュー</span><button id="btnHome" onclick="goHome()">≡ メニュー</button></header>
+
+<!-- メニュー -->
+<div id="home">
+  <button class="menu-btn kenpin" onclick="openKenpin()">📦 検品<small>伝票QR → 商品を照合</small></button>
+  <button class="menu-btn stock" onclick="openStock()">🔍 在庫検索<small>商品バーコード → 在庫確認</small></button>
 </div>
-<div id="zoomrow" style="display:none;padding:2px 14px 8px;">
-  🔍 ズーム <input type="range" id="zoom" style="width:calc(100% - 70px);vertical-align:middle;">
+
+<!-- スキャン（共通） -->
+<div id="scan" style="display:none;">
+  <div id="reader"></div>
+  <div class="btnrow">
+    <button class="b-scan" id="btnScan">📷 開始</button>
+    <button class="b-stop" id="btnTorch">🔦 ライト</button>
+    <button class="b-stop" id="btnStop">⏸ 停止</button>
+    <button class="b-reset" id="btnReset" style="display:none;">🔄 別伝票</button>
+  </div>
+  <div id="zoomrow" style="display:none;padding:2px 14px 8px;">🔍 ズーム <input type="range" id="zoom" style="width:calc(100% - 70px);vertical-align:middle;"></div>
+  <div id="msg"></div>
+  <div id="dbg">読取データ: （まだ）</div>
 </div>
-<div id="msg"></div>
-<div id="dbg" style="padding:4px 14px;font-size:12px;color:#888;word-break:break-all;">読取データ: （まだ）</div>
-<div id="done">✅ 検品完了（全て一致）</div>
-<table id="tbl">
-  <thead><tr><th>商品名</th><th>ロット</th><th class="q">数量</th><th class="q">読</th></tr></thead>
-  <tbody id="tb"></tbody>
-</table>
+
+<!-- 検品の表示 -->
+<div id="kenpinResult" style="display:none;">
+  <div id="info"></div>
+  <div id="done">✅ 検品完了（全て一致）</div>
+  <table><thead><tr><th>商品名</th><th>ロット</th><th class="q">数量</th><th class="q">読</th></tr></thead><tbody id="tb"></tbody></table>
+</div>
+
+<!-- 在庫検索の表示 -->
+<div id="stockResult" style="display:none;">
+  <div class="card" id="card">
+    <div class="hd"><span class="tot" id="tot"></span><div class="nm" id="nm"></div>
+      <div class="sub">棚番 <span class="tana" id="stana"></span>　商品CD <span id="scd"></span></div></div>
+    <table><thead><tr><th>ロット</th><th class="r">在庫</th><th>使用期限</th></tr></thead><tbody id="lots"></tbody></table>
+  </div>
+</div>
 <div id="flash"></div>
 
 <script>
-// ▼▼▼ ここにApps ScriptのウェブアプリURL（/exec）を貼る ▼▼▼
+// ▼ Apps ScriptのウェブアプリURL
 const APPS_URL = "https://script.google.com/macros/s/AKfycbxe7-GFzt6NF3TzfaIOfM-JM3YpWthCLMwbaF22KPBB7vbXmuOd-dRGYMikTxPqatMc/exec";
-const ACCESS_PIN = "";   // Apps Script側でPINを設定した場合のみ入力
-// ▲▲▲
+const ACCESS_PIN = "";
 
-let mode="denpyo", data=null, scanned={}, scanner=null, lastCode="", lastTime=0;
+let app="home";          // home / kenpin / stock
+let mode="denpyo";       // 検品サブ: denpyo / item
+let data=null, scanned={}, lastCode="", lastTime=0;
 const $=id=>document.getElementById(id);
 
-function flash(c){const f=$("flash");f.className=c;f.style.transition="none";f.style.opacity="0.55";
+function flash(c){const f=$("flash");f.className=c;f.style.transition="none";f.style.opacity="0.5";
   setTimeout(()=>{f.style.transition="opacity .4s";f.style.opacity="0";},30);
-  if(navigator.vibrate)navigator.vibrate(c==="g"?60:[80,50,80]);}
+  if(navigator.vibrate)navigator.vibrate(c==="g"?55:[80,50,80]);}
 function beep(ok){try{const c=new(window.AudioContext||window.webkitAudioContext)();const o=c.createOscillator(),g=c.createGain();
   o.connect(g);g.connect(c.destination);o.frequency.value=ok?880:220;o.start();
   g.gain.setValueAtTime(0.2,c.currentTime);g.gain.exponentialRampToValueAtTime(0.001,c.currentTime+0.2);o.stop(c.currentTime+0.2);}catch(e){}}
 function normBC(s){return String(s||"").replace(/[^0-9]/g,"");}
-function fmtDay(s){ if(!s)return""; const d=new Date(s); if(isNaN(d))return String(s);
-  return d.getFullYear()+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+('0'+d.getDate()).slice(-2); }
-// GS1-128 / GS1 DataMatrix のスキャン文字列から AI(01)=GTIN(14桁) を抜き出す
-function extractGTIN(raw){
-  let s=String(raw).replace(/^\][A-Za-z0-9]/,'').replace(/[()]/g,'');  // 記号識別子と括弧を除去
-  if(s.startsWith('01') && /^\d{14}/.test(s.slice(2))) return s.slice(2,16);
-  const m=String(raw).match(/\(?01\)?(\d{14})/);                        // 括弧付き(01)... にも対応
-  return m?m[1]:null;
-}
+function fmtDay(s){if(!s)return"";const d=new Date(s);if(isNaN(d))return String(s);
+  return d.getFullYear()+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+('0'+d.getDate()).slice(-2);}
+function extractGTIN(raw){let s=String(raw).replace(/^\][A-Za-z0-9]/,'').replace(/[()]/g,'');
+  if(s.startsWith('01')&&/^\d{14}/.test(s.slice(2)))return s.slice(2,16);
+  const m=String(raw).match(/\(?01\)?(\d{14})/);return m?m[1]:null;}
 
-// JSONP（携帯回線でApps Scriptを呼ぶ・CORS不要）
-function jsonp(params){
-  return new Promise((resolve)=>{
-    const name='cb'+Date.now()+Math.floor(Math.random()*1000);
-    window[name]=function(d){ delete window[name]; s.remove(); resolve(d); };
-    const s=document.createElement('script');
-    const q=Object.entries(params).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');
-    s.src=APPS_URL+'?'+q+'&callback='+name;
-    s.onerror=()=>{ delete window[name]; s.remove(); resolve({ok:false,error:'通信エラー'}); };
-    document.body.appendChild(s);
-  });
-}
+function jsonp(params){return new Promise(res=>{
+  const name='cb'+Date.now()+Math.floor(Math.random()*1000);
+  window[name]=d=>{delete window[name];s.remove();res(d);};
+  const s=document.createElement('script');
+  s.src=APPS_URL+'?'+Object.entries(params).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&')+'&callback='+name;
+  s.onerror=()=>{delete window[name];s.remove();res({ok:false,error:'通信エラー'});};
+  document.body.appendChild(s);});}
 
-function onScan(text, fmt){
-  $("dbg").textContent='読取'+(fmt?'['+fmt+']':'')+': '+text+'  GTIN='+(extractGTIN(text)||'-');
-  const now=Date.now();
-  if(text===lastCode && now-lastTime<1500)return;
+/* ===== 画面遷移 ===== */
+function openKenpin(){app="kenpin";mode="denpyo";data=null;scanned={};lastCode="";
+  $("title").textContent="📦 検品";$("btnHome").style.display="inline-block";$("btnReset").style.display="inline-block";
+  $("home").style.display="none";$("scan").style.display="block";$("kenpinResult").style.display="block";$("stockResult").style.display="none";
+  $("info").textContent="伝票QRを読み取ってください";$("tb").innerHTML="";$("done").style.display="none";$("msg").textContent="";
+  startScan();}
+function openStock(){app="stock";data=null;lastCode="";
+  $("title").textContent="🔍 在庫検索";$("btnHome").style.display="inline-block";$("btnReset").style.display="none";
+  $("home").style.display="none";$("scan").style.display="block";$("kenpinResult").style.display="none";$("stockResult").style.display="block";
+  $("card").style.display="none";$("msg").textContent="商品のバーコードを読み取ってください";
+  startScan();}
+function goHome(){stopScan();app="home";lastCode="";
+  $("title").textContent="📋 メニュー";$("btnHome").style.display="none";
+  $("home").style.display="block";$("scan").style.display="none";$("kenpinResult").style.display="none";$("stockResult").style.display="none";$("msg").textContent="";}
+
+/* ===== スキャン結果の振り分け ===== */
+function onScan(text,fmt){
+  $("dbg").textContent='読取'+(fmt?'['+fmt+']':'')+': '+text;
+  const now=Date.now(); if(text===lastCode&&now-lastTime<1500)return;
   lastCode=text;lastTime=now;
-  if(mode==="denpyo")loadDenpyo(text); else matchItem(text);
+  if(app==="stock") lookupStock(text);
+  else if(app==="kenpin"){ if(mode==="denpyo")loadDenpyo(text); else matchItem(text); }
 }
 
+/* ===== 検品 ===== */
 async function loadDenpyo(qr){
   $("msg").textContent="読込中...";
-  const params={denpyo:qr}; if(ACCESS_PIN)params.pin=ACCESS_PIN;
-  const j=await jsonp(params);
+  const p={denpyo:qr}; if(ACCESS_PIN)p.pin=ACCESS_PIN;
+  const j=await jsonp(p);
   if(!j.ok){$("msg").innerHTML='<span class="ng">'+(j.error||"エラー")+'</span>';beep(false);flash("r");return;}
   data=j;scanned={};
   $("info").innerHTML='伝票 <b>'+j.取引NO+'</b>　'+(j.得意先||"")+'　'+fmtDay(j.取引日);
-  render();mode="item";
-  $("msg").innerHTML='商品のバーコードを順に読み取ってください';beep(true);flash("g");
-}
-
-// コード文字列が明細のどれかに一致するか（純粋判定・副作用なし）。未充足を優先して返す。
+  renderItems();mode="item";$("msg").innerHTML='商品のバーコードを順に読み取ってください';beep(true);flash("g");}
 function findItem(code){
   if(!data)return null;
-  const gtin=extractGTIN(code), bc=normBC(code);
+  const gtin=extractGTIN(code),bc=normBC(code);
   let hit=null;
   for(const it of data.items){
     if(!it.scannable)continue;
-    const ij=normBC(it.jan), ig=normBC(it.gtin);
-    const m = (gtin && gtin===ig) || bc===ij || bc===ig
-            || (ig && bc===ig.replace(/^0+/,'')) || (ij && bc===ij.replace(/^0+/,''));
-    if(m){
-      const need=it.数量, got=scanned[it.商品cd+it.ロット]||0;
-      if(got<need)return it;     // まだ足りないものを最優先
-      if(!hit)hit=it;
-    }
-  }
-  return hit;
-}
-
+    const ij=normBC(it.jan),ig=normBC(it.gtin);
+    const m=(gtin&&gtin===ig)||bc===ij||bc===ig||(ig&&bc===ig.replace(/^0+/,''))||(ij&&bc===ij.replace(/^0+/,''));
+    if(m){const need=it.数量,got=scanned[it.商品cd+it.ロット]||0;if(got<need)return it;if(!hit)hit=it;}
+  }return hit;}
 function matchItem(code){
   if(!data)return;
   const hit=findItem(code);
-  if(!hit){const shown=extractGTIN(code)||normBC(code); $("msg").innerHTML='<span class="ng">⚠ この伝票に無い商品です ('+shown+')</span>';beep(false);flash("r");return;}
-  const k=hit.商品cd+hit.ロット, need=hit.数量, got=scanned[k]||0;
+  if(!hit){const sh=extractGTIN(code)||normBC(code);$("msg").innerHTML='<span class="ng">⚠ この伝票に無い商品です ('+sh+')</span>';beep(false);flash("r");return;}
+  const k=hit.商品cd+hit.ロット,need=hit.数量,got=scanned[k]||0;
   if(got>=need){$("msg").innerHTML='<span class="ng">⚠ '+hit.商品名+' は数量超過</span>';beep(false);flash("r");return;}
-  scanned[k]=got+1;
-  $("msg").innerHTML='<span class="ok">✓ '+hit.商品名+'</span>';beep(true);flash("g");
-  render();checkDone();
-}
-
-function render(){
+  scanned[k]=got+1;$("msg").innerHTML='<span class="ok">✓ '+hit.商品名+'</span>';beep(true);flash("g");renderItems();checkDone();}
+function renderItems(){
   if(!data){$("tb").innerHTML="";return;}
   let html="";
   for(const it of data.items){
-    const k=it.商品cd+it.ロット, need=it.数量, got=scanned[k]||0;
-    let cls="",pill;
+    const k=it.商品cd+it.ロット,need=it.数量,got=scanned[k]||0;let cls="",pill;
     if(!it.scannable){cls="skip";pill='<span class="pill">－</span>';}
     else if(got>=need){cls="done";pill='<span class="pill g">'+got+'/'+need+'</span>';}
     else{pill='<span class="pill y">'+got+'/'+need+'</span>';}
     html+='<tr class="'+cls+'"><td>'+it.商品名+'</td><td>'+it.ロット+'</td><td class="q">'+need+'</td><td class="q">'+pill+'</td></tr>';
-  }
-  $("tb").innerHTML=html;
-}
-
+  }$("tb").innerHTML=html;}
 function checkDone(){
   const all=data.items.filter(it=>it.scannable).every(it=>(scanned[it.商品cd+it.ロット]||0)>=it.数量);
   $("done").style.display=all?"block":"none";
-  if(all){beep(true);if(navigator.vibrate)navigator.vibrate([60,40,60,40,120]);}
-}
+  if(all){beep(true);if(navigator.vibrate)navigator.vibrate([60,40,60,40,120]);}}
 
-// ===== スキャン：Android標準のBarcodeDetectorを優先（反転バーコードにも対応）=====
-let stream=null, video=null, detector=null, rafTimer=null, track=null, torchOn=false;
-const cvs=document.createElement('canvas'), cx=cvs.getContext('2d',{willReadFrequently:true});
+/* ===== 在庫検索 ===== */
+async function lookupStock(code){
+  $("msg").textContent='照会中...';
+  const p={stock:code}; if(ACCESS_PIN)p.pin=ACCESS_PIN;
+  const j=await jsonp(p);
+  if(!j.ok){$("card").style.display='none';$("msg").innerHTML='<span class="ng">'+(j.error||'該当なし')+'</span>';beep(false);flash("r");return;}
+  $("nm").textContent=j.商品名;$("stana").textContent=j.棚番||'-';$("scd").textContent=j.商品CD;$("tot").textContent=j.在庫数+' 個';
+  $("lots").innerHTML=(j.lots||[]).map(l=>'<tr><td>'+l.lot+'</td><td class="r"><b>'+l.qty+'</b></td><td>'+(l.exp||'')+'</td></tr>').join('');
+  $("card").style.display='block';$("msg").textContent='次の商品をどうぞ';beep(true);flash("g");}
+
+/* ===== スキャンエンジン（BarcodeDetector優先・反転対応・ズーム/ライト）===== */
+let stream=null,video=null,detector=null,rafTimer=null,track=null,torchOn=false,scanner=null;
+const cvs=document.createElement('canvas'),cx=cvs.getContext('2d',{willReadFrequently:true});
 
 async function startScan(){
   if(stream)return;
-  // ① Android Chrome 等：ネイティブBarcodeDetector
   if('BarcodeDetector' in window){
     try{
       const sup=await BarcodeDetector.getSupportedFormats();
       const want=['qr_code','code_128','ean_13','ean_8','itf','data_matrix','code_39','codabar'];
       detector=new BarcodeDetector({formats:sup.filter(f=>want.includes(f))});
-      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',
-        width:{ideal:1920},height:{ideal:1080}}});
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}}});
       track=stream.getVideoTracks()[0];
-      try{ await track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch(e){}
-      video=document.createElement('video'); video.setAttribute('playsinline','true'); video.muted=true;
-      video.srcObject=stream; await video.play();
-      const r=$("reader"); r.innerHTML=''; r.appendChild(video); video.style.width='100%';
-      setupZoom();
-      scanLoop();
-      return;
-    }catch(e){ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;} }
+      try{await track.applyConstraints({advanced:[{focusMode:'continuous'}]});}catch(e){}
+      video=document.createElement('video');video.setAttribute('playsinline','true');video.muted=true;
+      video.srcObject=stream;await video.play();
+      const r=$("reader");r.innerHTML='';r.appendChild(video);video.style.width='100%';
+      setupZoom();scanLoop();return;
+    }catch(e){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}}
   }
-  // ② フォールバック（iOS Safari等）：html5-qrcode
   startH5();
 }
-
 async function scanLoop(){
   if(!stream)return;
   let codes=[];
-  try{ codes=(await detector.detect(video))||[]; }catch(e){}   // 通常検出（ハード支援・高速）
-  // 通常で読めない時だけ、縮小画像を反転して再検出（黒地白バー対応・負荷を最小化）
+  try{codes=(await detector.detect(video))||[];}catch(e){}
   if(!codes.length && video.videoWidth){
     try{
-      const w=video.videoWidth, h=video.videoHeight;
-      const sc=Math.min(1, 1100/w);                 // 最大幅1100pxに縮小して反転コストを削減
-      const sw=Math.round(w*sc), sh=Math.round(h*sc);
-      cvs.width=sw; cvs.height=sh; cx.drawImage(video,0,0,sw,sh);
-      const im=cx.getImageData(0,0,sw,sh), d=im.data;
-      for(let i=0;i<d.length;i+=4){ d[i]=255-d[i]; d[i+1]=255-d[i+1]; d[i+2]=255-d[i+2]; }
-      cx.putImageData(im,0,0);
-      codes=(await detector.detect(cvs))||[];
+      const w=video.videoWidth,h=video.videoHeight,sc=Math.min(1,1100/w),sw=Math.round(w*sc),sh=Math.round(h*sc);
+      cvs.width=sw;cvs.height=sh;cx.drawImage(video,0,0,sw,sh);
+      const im=cx.getImageData(0,0,sw,sh),d=im.data;
+      for(let i=0;i<d.length;i+=4){d[i]=255-d[i];d[i+1]=255-d[i+1];d[i+2]=255-d[i+2];}
+      cx.putImageData(im,0,0);codes=(await detector.detect(cvs))||[];
     }catch(e){}
   }
   const best=pickBest(codes);
-  if(best) onScan(best.rawValue, best.format);
-  rafTimer=setTimeout(scanLoop, 60);
+  if(best)onScan(best.rawValue,best.format);
+  rafTimer=setTimeout(scanLoop,60);
 }
-
-// 複数検出された中から最良を選ぶ：①明細に一致するもの最優先 ②形式の優先度(code_128>data_matrix>qr>ean)
 function pickBest(codes){
   if(!codes||!codes.length)return null;
-  const pri={code_128:5,data_matrix:4,itf:2,ean_13:1,ean_8:1,code_39:1};
-  if(mode==="item" && data){
-    const nonqr=codes.filter(c=>c.format!=="qr_code");   // 照合中は伝票QRを無視（ピコン防止）
-    if(!nonqr.length) return null;                       // QRしか映ってない→何もしない
-    for(const c of nonqr){ if(findItem(c.rawValue)) return c; }   // 一致を最優先（誤読EANを無視）
+  const pri={code_128:5,data_matrix:4,ean_13:3,ean_8:3,itf:2,code_39:1,qr_code:0};
+  if(app==="stock"){
+    const nonqr=codes.filter(c=>c.format!=="qr_code"); const pool=nonqr.length?nonqr:codes;
+    return pool.slice().sort((a,b)=>(pri[b.format]||0)-(pri[a.format]||0))[0];
+  }
+  if(app==="kenpin"&&mode==="item"&&data){
+    const nonqr=codes.filter(c=>c.format!=="qr_code");
+    if(!nonqr.length)return null;
+    for(const c of nonqr){if(findItem(c.rawValue))return c;}
     return nonqr.slice().sort((a,b)=>(pri[b.format]||0)-(pri[a.format]||0))[0];
   }
-  // 伝票モード：QRのみ受け付ける（商品バーコードでは伝票を開かない）
-  for(const c of codes){ if(c.format==="qr_code") return c; }
+  // 検品・伝票読取：QRのみ
+  for(const c of codes){if(c.format==="qr_code")return c;}
   return null;
 }
-
 function startH5(){
   if(scanner)return;
-  scanner=new Html5Qrcode("reader",{ formatsToSupport:[
+  scanner=new Html5Qrcode("reader",{formatsToSupport:[
     Html5QrcodeSupportedFormats.QR_CODE,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,
     Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.ITF,Html5QrcodeSupportedFormats.DATA_MATRIX,
-    Html5QrcodeSupportedFormats.CODE_39], experimentalFeatures:{useBarCodeDetectorIfSupported:true} });
-  scanner.start({facingMode:"environment"},
-    { fps:15, videoConstraints:{ facingMode:"environment", width:{ideal:1920}, height:{ideal:1080} } },
-    onScan, ()=>{})
-    .catch(e=>{$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e+'</span>';scanner=null;});
+    Html5QrcodeSupportedFormats.CODE_39],experimentalFeatures:{useBarCodeDetectorIfSupported:true}});
+  scanner.start({facingMode:"environment"},{fps:15,videoConstraints:{facingMode:"environment",width:{ideal:1920},height:{ideal:1080}}},
+    (t)=>onScan(t),()=>{}).catch(e=>{$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e+'</span>';scanner=null;});
 }
-
 function stopScan(){
   if(rafTimer){clearTimeout(rafTimer);rafTimer=null;}
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;track=null;torchOn=false;$("reader").innerHTML='';$("zoomrow").style.display='none';}
   if(scanner){scanner.stop().then(()=>{scanner.clear();scanner=null;}).catch(()=>{scanner=null;});}
 }
-
 function setupZoom(){
-  const row=$("zoomrow"), z=$("zoom");
-  try{
-    const caps=track.getCapabilities?track.getCapabilities():{};
-    if(caps.zoom && caps.zoom.max>caps.zoom.min){
-      z.min=caps.zoom.min; z.max=caps.zoom.max; z.step=caps.zoom.step||0.1;
-      z.value=caps.zoom.min;
-      row.style.display='block';
-      z.oninput=()=>{ track.applyConstraints({advanced:[{zoom:Number(z.value)}]}).catch(()=>{}); };
-      return;
-    }
+  const row=$("zoomrow"),z=$("zoom");
+  try{const caps=track.getCapabilities?track.getCapabilities():{};
+    if(caps.zoom&&caps.zoom.max>caps.zoom.min){z.min=caps.zoom.min;z.max=caps.zoom.max;z.step=caps.zoom.step||0.1;z.value=caps.zoom.min;
+      row.style.display='block';z.oninput=()=>{track.applyConstraints({advanced:[{zoom:Number(z.value)}]}).catch(()=>{});};return;}
   }catch(e){}
-  row.style.display='none';   // ズーム非対応端末
+  row.style.display='none';
 }
-
 async function toggleTorch(){
-  if(!track){ $("msg").innerHTML='<span class="ng">先に「開始」を押してください</span>'; return; }
-  try{
-    const caps=track.getCapabilities?track.getCapabilities():{};
-    if(!caps.torch){ $("msg").innerHTML='<span class="ng">この端末はライト非対応</span>'; return; }
-    torchOn=!torchOn;
-    await track.applyConstraints({advanced:[{torch:torchOn}]});
-  }catch(e){ $("msg").innerHTML='<span class="ng">ライト切替失敗</span>'; }
+  if(!track){$("msg").innerHTML='<span class="ng">先に「開始」を押してください</span>';return;}
+  try{const caps=track.getCapabilities?track.getCapabilities():{};
+    if(!caps.torch){$("msg").innerHTML='<span class="ng">この端末はライト非対応</span>';return;}
+    torchOn=!torchOn;await track.applyConstraints({advanced:[{torch:torchOn}]});}catch(e){}
 }
-
 $("btnScan").onclick=startScan;
 $("btnTorch").onclick=toggleTorch;
 $("btnStop").onclick=stopScan;
