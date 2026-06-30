@@ -207,8 +207,11 @@ async function lookupStock(code){
   if(!j.ok){
     $("stockErr").textContent='⚠ '+(j.error||'該当なし');$("stockErr").style.display="block";$("btnNext").style.display="block";return;
   }
-  $("nm").textContent=j.商品名;$("stana").textContent=j.棚番||'-';$("scd").textContent=j.商品CD;$("tot").textContent=j.在庫数+' 個';
-  $("lots").innerHTML=(j.lots||[]).map(l=>'<tr><td>'+l.lot+'</td><td class="r"><b>'+l.qty+'</b></td><td>'+fmtExp(l.exp)+'</td></tr>').join('');
+  $("nm").textContent=j.商品名;$("stana").textContent=j.棚番||'-';$("scd").textContent=j.商品CD;
+  $("tot").textContent=j.在庫数+' 個';$("tot").style.color=(j.在庫数>0?'#00695c':'#c62828');
+  $("lots").innerHTML=(j.lots&&j.lots.length)
+    ?j.lots.map(l=>'<tr><td>'+l.lot+'</td><td class="r"><b>'+l.qty+'</b></td><td>'+fmtExp(l.exp)+'</td></tr>').join('')
+    :'<tr><td colspan="3" style="text-align:center;color:#c62828;font-weight:bold;">在庫なし</td></tr>';
   $("card").style.display='block';$("btnNext").style.display='block';}
 
 /* ===== スキャンエンジン（BarcodeDetector優先・反転対応・ズーム/ライト）===== */
