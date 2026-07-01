@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="倉庫ツール">
 <link rel="apple-touch-icon" href="icon-192.png">
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="zxing.min.js"></script>
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   body{margin:0;font-family:system-ui,sans-serif;background:#f4f5f7;color:#222;}
@@ -255,7 +255,7 @@ async function startScan(){
       setupZoom();scanLoop();return;
     }catch(e){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}}
   }
-  startH5();
+  startZxing();   // iPhone(Safari)等 BarcodeDetector非対応 → ZXingで反転対応読取
 }
 async function scanLoop(){
   if(!stream)return;
@@ -291,14 +291,51 @@ function pickBest(codes){
   for(const c of codes){if(c.format==="qr_code")return c;}
   return null;
 }
-function startH5(){
-  if(scanner)return;
-  scanner=new Html5Qrcode("reader",{formatsToSupport:[
-    Html5QrcodeSupportedFormats.QR_CODE,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,
-    Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.ITF,Html5QrcodeSupportedFormats.DATA_MATRIX,
-    Html5QrcodeSupportedFormats.CODE_39],experimentalFeatures:{useBarCodeDetectorIfSupported:true}});
-  scanner.start({facingMode:"environment"},{fps:15,videoConstraints:{facingMode:"environment",width:{ideal:1920},height:{ideal:1080}}},
-    (t)=>onScan(t),()=>{}).catch(e=>{$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e+'</span>';scanner=null;});
+// ===== ZXing版（iPhone等・反転バーコード対応）=====
+let zxReader=null;
+function ensureZx(){
+  if(zxReader)return;
+  const hints=new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[
+    ZXing.BarcodeFormat.QR_CODE,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.ITF,ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.CODE_39]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+  zxReader=new ZXing.MultiFormatReader();
+  zxReader.setHints(hints);
+}
+async function startZxing(){
+  ensureZx();
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
+  }catch(e){$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e+'</span>';return;}
+  track=stream.getVideoTracks()[0];
+  video=document.createElement('video');video.setAttribute('playsinline','true');video.muted=true;
+  video.srcObject=stream;try{await video.play();}catch(e){}
+  const r=$("reader");r.innerHTML='';r.appendChild(video);video.style.width='100%';
+  setupZoom();
+  scanLoopZ();
+}
+function zxDecode(){
+  try{
+    const src=new ZXing.HTMLCanvasElementLuminanceSource(cvs);
+    try{ return zxReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src))); }catch(e){}
+    return zxReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src.invert())));  // 反転（黒地白バー）
+  }catch(e){ return null; }
+  finally{ try{ zxReader.reset(); }catch(e){} }
+}
+function scanLoopZ(){
+  if(!stream){return;}
+  const w=video.videoWidth,h=video.videoHeight;
+  if(w){
+    cvs.width=w;cvs.height=h;cx.drawImage(video,0,0,w,h);
+    const res=zxDecode();
+    if(res){
+      const isQR=(res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE);
+      const okMode=(app==="kenpin"&&mode==="denpyo")?isQR:!isQR;   // 伝票=QR / 商品=非QR のみ採用
+      if(okMode) onScan(res.getText(), isQR?'qr_code':'barcode');
+    }
+  }
+  rafTimer=setTimeout(scanLoopZ,110);
 }
 function stopScan(){
   if(rafTimer){clearTimeout(rafTimer);rafTimer=null;}
