@@ -87,6 +87,10 @@
     <button class="b-reset" id="btnReset" style="display:none;">🔄 別伝票</button>
   </div>
   <div id="zoomrow" style="display:none;padding:2px 14px 8px;">🔍 ズーム <input type="range" id="zoom" style="width:calc(100% - 70px);vertical-align:middle;"></div>
+  <div id="manualrow" style="display:flex;gap:6px;padding:4px 14px 6px;">
+    <input id="manualIn" inputmode="numeric" autocomplete="off" placeholder="読めない時は番号を手入力（数字）" style="flex:1;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:15px;">
+    <button id="btnManual" style="padding:10px 16px;border:0;border-radius:8px;background:#455a64;color:#fff;font-weight:bold;">照会</button>
+  </div>
   <div id="msg"></div>
   <div id="dbg">読取データ: （まだ）</div>
 </div>
@@ -410,7 +414,7 @@ function zxDrawFull(rot){
   cx.setTransform(1,0,0,1,0,0);
 }
 let zxPhase=0;
-const WASM_1D=["Code128","EAN-13","EAN-8","ITF","Code39","UPC-A","UPC-E","DataBar","DataBarExpanded"];
+const WASM_1D=["Code128","EAN-13","EAN-8","ITF","Code39","UPC-A","UPC-E","DataBar","DataBarExpanded","DataBarLimited","PDF417"];
 async function scanLoopZ(){
   if(!stream){return;}
   const w=video.videoWidth,h=video.videoHeight;
@@ -420,8 +424,15 @@ async function scanLoopZ(){
     if(window.zxingReadBarcodes){
       // ★高精度デコーダ(zxing-cpp WASM)：反転/回転/高密度に強い。全体を1回で読む
       if(!video._logged){ video._logged=true; $("dbg").textContent='高精度読取 '+w+'x'+h+' 検出中...'; }
-      const sc=Math.min(1,2000/Math.max(w,h)),cw=Math.round(w*sc),ch=Math.round(h*sc);   // 高解像度のまま（黒地の細部保持）
-      cvs.width=cw;cvs.height=ch;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,0,0,cw,ch);
+      let cw,ch;
+      if(!isDenpyo && (zxPhase++ & 1)){   // 商品モードは1フレームおきに中央デジタルズーム（黒地の細いバーを拡大）
+        const cW=Math.round(w*0.72),cH=Math.round(h*0.5),cX=(w-cW)>>1,cY=(h-cH)>>1,up=Math.min(1.5,2200/cW);
+        cw=Math.round(cW*up);ch=Math.round(cH*up);
+        cvs.width=cw;cvs.height=ch;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,cX,cY,cW,cH,0,0,cw,ch);
+      }else{                               // 全体（高解像度のまま）
+        const sc=Math.min(1,2000/Math.max(w,h));cw=Math.round(w*sc);ch=Math.round(h*sc);
+        cvs.width=cw;cvs.height=ch;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,0,0,cw,ch);
+      }
       let im; try{ im=cx.getImageData(0,0,cw,ch); }catch(e){}
       if(im){
         try{
@@ -477,6 +488,10 @@ if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catc
 $("btnScan").onclick=startScan;
 $("btnTorch").onclick=toggleTorch;
 $("btnStop").onclick=stopScan;
+// 手入力フォールバック（読めない時は番号を打って照会）。onScanと同じ経路に流す
+function manualGo(){const v=$("manualIn").value.trim();if(!v)return;$("manualIn").value="";$("manualIn").blur();lastCode="";onScan(v,'manual');}
+$("btnManual").onclick=manualGo;
+$("manualIn").addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();manualGo();}});
 $("btnNext").onclick=()=>{$("card").style.display="none";$("btnNext").style.display="none";$("stockErr").style.display="none";$("loading").style.display="none";
   $("scan").style.display="block";$("msg").textContent="商品のバーコードを読み取ってください";lastCode="";startScan();};
 $("btnReset").onclick=()=>{data=null;scanned={};mode="denpyo";lastCode="";document.body.className="kenpinmode qrmode";
