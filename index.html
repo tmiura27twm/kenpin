@@ -11,6 +11,14 @@
 <meta name="apple-mobile-web-app-title" content="倉庫ツール">
 <link rel="apple-touch-icon" href="icon-192.png">
 <script src="zxing.min.js"></script>
+<!-- 高精度デコーダ zxing-cpp(WASM)。反転/回転に強くiPhoneの標準カメラ級。読み込めない時は上の旧JS版にフォールバック -->
+<script type="module">
+  try{
+    const m = await import("https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/es/reader/index.js");
+    window.zxingReadBarcodes = m.readBarcodes;
+    m.readBarcodes(new ImageData(2,2),{formats:["QRCode"]}).catch(()=>{});   // wasm事前読込（初回遅延減）
+  }catch(e){ /* CDN不可時は旧JS版で動作 */ }
+</script>
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   body{margin:0;font-family:system-ui,sans-serif;background:#f4f5f7;color:#222;}
@@ -399,27 +407,47 @@ function zxDrawFull(rot){
   cx.setTransform(1,0,0,1,0,0);
 }
 let zxPhase=0;
-function scanLoopZ(){
+const WASM_1D=["Code128","EAN-13","EAN-8","ITF","Code39","UPC-A","UPC-E","DataBar","DataBarExpanded"];
+async function scanLoopZ(){
   if(!stream){return;}
-  const w=video.videoWidth;
+  const w=video.videoWidth,h=video.videoHeight;
   let hit=false;
   if(w){
-    if(!video._logged){ video._logged=true; $("dbg").textContent='ZX起動 video '+w+'x'+video.videoHeight+' 検出中...'; }
-    if(app==="kenpin"&&mode==="denpyo"){
-      // 伝票QR：全体（通常/反転を1フレームずつ）。QRは向き不問なので回転不要
-      zxDrawFull(false); if(zxPhase++&1) zxInvert();
-      const res=zxDec(cvs,zxHintsQR);
-      if(res&&res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'qr'); }
+    const isDenpyo=(app==="kenpin"&&mode==="denpyo");
+    if(window.zxingReadBarcodes){
+      // ★高精度デコーダ(zxing-cpp WASM)：反転/回転/高密度に強い。全体を1回で読む
+      if(!video._logged){ video._logged=true; $("dbg").textContent='高精度読取 '+w+'x'+h+' 検出中...'; }
+      const sc=Math.min(1,1280/Math.max(w,h)),cw=Math.round(w*sc),ch=Math.round(h*sc);
+      cvs.width=cw;cvs.height=ch;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,0,0,cw,ch);
+      let im; try{ im=cx.getImageData(0,0,cw,ch); }catch(e){}
+      if(im){
+        try{
+          const res=await window.zxingReadBarcodes(im,{
+            formats:isDenpyo?["QRCode"]:WASM_1D,
+            tryHarder:true,tryInvert:true,tryRotate:true,tryDownscale:true,maxNumberOfSymbols:1});
+          if(res&&res.length&&res[0].text){
+            const isQR=(res[0].format==="QRCode");
+            if(isDenpyo===isQR){ hit=true; onScan(res[0].text, isQR?'qr':'bar'); }
+          }
+        }catch(e){ if(!video._errlog){video._errlog=true;$("dbg").textContent='WASM読取エラー:'+e;} }
+      }
     }else{
-      // 商品/箱の1D：0°は中央帯をOtsuで純白黒化（反転/通常）、90°は全体回転
-      const p=zxPhase++ & 3;                 // 0:帯反転 1:帯通常 2:90°反転 3:90°通常
-      if(p<2){ zxDrawBandBW(!(p&1)); }
-      else { zxDrawFull(true); if(!(p&1)) zxInvert(); }
-      const res=zxDec(cvs,zxHints1D);
-      if(res&&res.getBarcodeFormat()!==ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'bar'); }
+      // フォールバック：旧JS版ZXing
+      if(!video._logged){ video._logged=true; $("dbg").textContent='ZX起動 video '+w+'x'+h+' 検出中...'; }
+      if(isDenpyo){
+        zxDrawFull(false); if(zxPhase++&1) zxInvert();
+        const res=zxDec(cvs,zxHintsQR);
+        if(res&&res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'qr'); }
+      }else{
+        const p=zxPhase++ & 3;                 // 0:帯反転 1:帯通常 2:90°反転 3:90°通常
+        if(p<2){ zxDrawBandBW(!(p&1)); }
+        else { zxDrawFull(true); if(!(p&1)) zxInvert(); }
+        const res=zxDec(cvs,zxHints1D);
+        if(res&&res.getBarcodeFormat()!==ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'bar'); }
+      }
     }
   }
-  rafTimer=setTimeout(scanLoopZ, hit?500:40);
+  rafTimer=setTimeout(scanLoopZ, hit?600:50);
 }
 function stopScan(){
   if(rafTimer){clearTimeout(rafTimer);rafTimer=null;}
