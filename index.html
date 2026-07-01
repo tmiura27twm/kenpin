@@ -348,12 +348,22 @@ function zxDec(canvas,hints){
   }
   return null;
 }
-// バーコードは横長なので、中央の帯だけを切り出して読む（周囲の白箱を除外＝GlobalHistogramの二値化が安定）
-function zxDrawBand(){
-  const w=video.videoWidth,h=video.videoHeight,by=Math.round(h*0.2),bh=Math.round(h*0.6),sc=Math.min(1,1400/w);
+// 中央帯を切り出し、Otsu法で最適しきい値を求めて「純粋な白黒2値画像」を作る。
+// inv=trueで白黒反転（白バー→黒バー化）。ZXing任せにせず自前で綺麗にするので反転バーコードに強い。
+function zxDrawBandOtsu(inv){
+  const w=video.videoWidth,h=video.videoHeight,by=Math.round(h*0.25),bh=Math.round(h*0.5),sc=Math.min(1,1400/w);
   cx.setTransform(1,0,0,1,0,0);
-  cvs.width=Math.round(w*sc);cvs.height=Math.round(bh*sc);
-  cx.drawImage(video,0,by,w,bh,0,0,cvs.width,cvs.height);
+  const cw=Math.round(w*sc),ch=Math.round(bh*sc);
+  cvs.width=cw;cvs.height=ch;cx.drawImage(video,0,by,w,bh,0,0,cw,ch);
+  const im=cx.getImageData(0,0,cw,ch),d=im.data,n=d.length>>2,g=new Uint8Array(n),hist=new Array(256).fill(0);
+  for(let i=0,j=0;i<d.length;i+=4,j++){const v=(d[i]*299+d[i+1]*587+d[i+2]*114)/1000|0;g[j]=v;hist[v]++;}
+  let sum=0;for(let t=0;t<256;t++)sum+=t*hist[t];
+  let sumB=0,wB=0,mx=-1,thr=127;
+  for(let t=0;t<256;t++){wB+=hist[t];if(!wB)continue;const wF=n-wB;if(!wF)break;
+    sumB+=t*hist[t];const mB=sumB/wB,mF=(sum-sumB)/wF,bt=wB*wF*(mB-mF)*(mB-mF);
+    if(bt>mx){mx=bt;thr=t;}}
+  for(let i=0,j=0;i<d.length;i+=4,j++){let bw=g[j]>thr?255:0;if(inv)bw=255-bw;d[i]=d[i+1]=d[i+2]=bw;}
+  cx.putImageData(im,0,0);
 }
 // 反転＋グレースケール＋コントラスト伸張。黒地/緑地の白バーを白飛びから救ってくっきり二値化させる
 function invBoost(d){
@@ -386,10 +396,10 @@ function scanLoopZ(){
       const res=zxDec(cvs,zxHintsQR);
       if(res&&res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'qr'); }
     }else{
-      // 商品/箱の1D：0°は中央帯、90°は全体回転。反転を先に試す（黒地/緑地の白バー優先）
-      const p=zxPhase++ & 3;                 // 0:0°反転 1:0°通常 2:90°反転 3:90°通常
-      if(p>=2) zxDrawFull(true); else zxDrawBand();
-      if(!(p&1)) zxInvert();
+      // 商品/箱の1D：0°は中央帯をOtsuで純白黒化（反転/通常）、90°は全体回転
+      const p=zxPhase++ & 3;                 // 0:帯反転 1:帯通常 2:90°反転 3:90°通常
+      if(p<2){ zxDrawBandOtsu(!(p&1)); }
+      else { zxDrawFull(true); if(!(p&1)) zxInvert(); }
       const res=zxDec(cvs,zxHints1D);
       if(res&&res.getBarcodeFormat()!==ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'bar'); }
     }
