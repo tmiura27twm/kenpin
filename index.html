@@ -328,11 +328,14 @@ function ensureZx(){
 async function startZxing(){
   try{ ensureZx(); }
   catch(e){$("msg").innerHTML='<span class="ng">読取ライブラリ初期化失敗: '+e+'</span>';$("dbg").textContent='ZXing初期化NG: '+e;return;}
-  try{   // 高解像度＝小さい/遠いバーコードも細部が残る
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});
+  try{   // 高解像度＝小さい/高密度の黒地バーコードも細部が残る
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:2560},height:{ideal:1440}}});
   }catch(e){
-    try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}); }
-    catch(e2){$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e2+'</span>';return;}
+    try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}}); }
+    catch(e2){
+      try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}); }
+      catch(e3){$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e3+'</span>';return;}
+    }
   }
   track=stream.getVideoTracks()[0];
   try{   // オートフォーカス＋露出を下げて白飛び防止（黒地/光沢面の読取対策）
@@ -417,14 +420,14 @@ async function scanLoopZ(){
     if(window.zxingReadBarcodes){
       // ★高精度デコーダ(zxing-cpp WASM)：反転/回転/高密度に強い。全体を1回で読む
       if(!video._logged){ video._logged=true; $("dbg").textContent='高精度読取 '+w+'x'+h+' 検出中...'; }
-      const sc=Math.min(1,1280/Math.max(w,h)),cw=Math.round(w*sc),ch=Math.round(h*sc);
+      const sc=Math.min(1,2000/Math.max(w,h)),cw=Math.round(w*sc),ch=Math.round(h*sc);   // 高解像度のまま（黒地の細部保持）
       cvs.width=cw;cvs.height=ch;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,0,0,cw,ch);
       let im; try{ im=cx.getImageData(0,0,cw,ch); }catch(e){}
       if(im){
         try{
           const res=await window.zxingReadBarcodes(im,{
             formats:isDenpyo?["QRCode"]:WASM_1D,
-            tryHarder:true,tryInvert:true,tryRotate:true,tryDownscale:true,maxNumberOfSymbols:1});
+            tryHarder:true,tryInvert:true,tryRotate:true,tryDownscale:true,tryDenoise:true,maxNumberOfSymbols:1});
           if(res&&res.length&&res[0].text){
             const isQR=(res[0].format==="QRCode");
             if(isDenpyo===isQR){ hit=true; onScan(res[0].text, isQR?'qr':'bar'); }
