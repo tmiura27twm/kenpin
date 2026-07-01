@@ -342,6 +342,7 @@ function zxDec(canvas,hints){
 function zxInvert(){const im=cx.getImageData(0,0,cvs.width,cvs.height),d=im.data;
   for(let i=0;i<d.length;i+=4){d[i]=255-d[i];d[i+1]=255-d[i+1];d[i+2]=255-d[i+2];}
   cx.putImageData(im,0,0);}
+let zxPhase=0;
 function scanLoopZ(){
   if(!stream){return;}
   const w=video.videoWidth,h=video.videoHeight;
@@ -349,23 +350,23 @@ function scanLoopZ(){
   if(w){
     if(!video._logged){ video._logged=true; $("dbg").textContent='ZX起動 video '+w+'x'+h+' 検出中...'; }
     if(app==="kenpin"&&mode==="denpyo"){
-      // 伝票QR：全体を読む（通常→反転）
+      // 伝票QR：全体を読む（通常/反転を1フレームずつ）
       cvs.width=w;cvs.height=h;cx.drawImage(video,0,0,w,h);
-      let res=zxDec(cvs,zxHintsQR); if(!res){ zxInvert(); res=zxDec(cvs,zxHintsQR); }
+      if(zxPhase++&1) zxInvert();
+      const res=zxDec(cvs,zxHintsQR);
       if(res&&res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'qr'); }
     }else{
-      // 商品/箱の1Dバーコード：中央の帯を切り出し、幅1080以下に縮小して読む（高速＝連続処理でき、遠め/箱でも安定）
-      const bh=Math.max(80,Math.round(h*0.6)), by=Math.round((h-bh)/2), sc=Math.min(1,1080/w);
-      cvs.width=Math.round(w*sc);cvs.height=Math.round(bh*sc);
-      cx.drawImage(video,0,by,w,bh,0,0,cvs.width,cvs.height);
-      let res=zxDec(cvs,zxHints1D); if(!res){ zxInvert(); res=zxDec(cvs,zxHints1D); }
-      if(!res){ const fs=Math.min(1,1080/w);   // ダメなら全体（縮小）も試す
-                cvs.width=Math.round(w*fs);cvs.height=Math.round(h*fs);cx.drawImage(video,0,0,w,h,0,0,cvs.width,cvs.height);
-                res=zxDec(cvs,zxHints1D); if(!res){ zxInvert(); res=zxDec(cvs,zxHints1D); } }
+      // 商品/箱の1D：1フレーム1デコードで軽量化。位相を回して 帯/全体 × 通常/反転 を順に試す（緑地の反転バーコードも対応）
+      const phase=zxPhase++ & 3, useBand=(phase<2), inv=(phase&1), sc=Math.min(1,1024/w);
+      if(useBand){ const bh=Math.round(h*0.6), by=Math.round((h-bh)/2);
+        cvs.width=Math.round(w*sc);cvs.height=Math.round(bh*sc);cx.drawImage(video,0,by,w,bh,0,0,cvs.width,cvs.height); }
+      else { cvs.width=Math.round(w*sc);cvs.height=Math.round(h*sc);cx.drawImage(video,0,0,w,h,0,0,cvs.width,cvs.height); }
+      if(inv) zxInvert();
+      const res=zxDec(cvs,zxHints1D);
       if(res&&res.getBarcodeFormat()!==ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'bar'); }
     }
   }
-  rafTimer=setTimeout(scanLoopZ, hit?500:70);
+  rafTimer=setTimeout(scanLoopZ, hit?500:40);
 }
 function stopScan(){
   if(rafTimer){clearTimeout(rafTimer);rafTimer=null;}
