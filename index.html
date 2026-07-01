@@ -327,7 +327,17 @@ async function startZxing(){
     catch(e2){$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e2+'</span>';return;}
   }
   track=stream.getVideoTracks()[0];
-  try{ await track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch(e){}   // オートフォーカス
+  try{   // オートフォーカス＋露出を下げて白飛び防止（黒地/光沢面の読取対策）
+    const caps=track.getCapabilities?track.getCapabilities():{},adv=[];
+    if(caps.focusMode&&caps.focusMode.indexOf&&caps.focusMode.indexOf('continuous')>=0) adv.push({focusMode:'continuous'});
+    else adv.push({focusMode:'continuous'});
+    if(caps.exposureMode&&caps.exposureMode.indexOf('continuous')>=0) adv.push({exposureMode:'continuous'});
+    if(caps.exposureCompensation&&caps.exposureCompensation.min!=null){
+      const ec=caps.exposureCompensation, target=ec.min+(ec.max-ec.min)*0.25;  // 暗め寄り
+      adv.push({exposureCompensation:target});
+    }
+    if(adv.length) await track.applyConstraints({advanced:adv});
+  }catch(e){}
   video=document.createElement('video');
   video.setAttribute('playsinline','true');video.setAttribute('muted','true');video.muted=true;video.autoplay=true;
   video.srcObject=stream;
@@ -348,21 +358,26 @@ function zxDec(canvas,hints){
   }
   return null;
 }
-// 中央帯を切り出し、Otsu法で最適しきい値を求めて「純粋な白黒2値画像」を作る。
-// inv=trueで白黒反転（白バー→黒バー化）。ZXing任せにせず自前で綺麗にするので反転バーコードに強い。
-function zxDrawBandOtsu(inv){
+// 中央帯を切り出し、適応的(局所)しきい値で純白黒2値化。積分画像で各画素の周辺平均を高速算出し、
+// 「局所平均より明るい=白/暗い=黒」で判定。光ムラ・グレア・白飛びに強い（手で影を作るのと同じ効果）。
+// inv=trueで白黒反転（白バー→黒バー化＝黒地/緑地の反転バーコード用）。
+function zxDrawBandBW(inv){
   const w=video.videoWidth,h=video.videoHeight,by=Math.round(h*0.25),bh=Math.round(h*0.5),sc=Math.min(1,1400/w);
   cx.setTransform(1,0,0,1,0,0);
   const cw=Math.round(w*sc),ch=Math.round(bh*sc);
   cvs.width=cw;cvs.height=ch;cx.drawImage(video,0,by,w,bh,0,0,cw,ch);
-  const im=cx.getImageData(0,0,cw,ch),d=im.data,n=d.length>>2,g=new Uint8Array(n),hist=new Array(256).fill(0);
-  for(let i=0,j=0;i<d.length;i+=4,j++){const v=(d[i]*299+d[i+1]*587+d[i+2]*114)/1000|0;g[j]=v;hist[v]++;}
-  let sum=0;for(let t=0;t<256;t++)sum+=t*hist[t];
-  let sumB=0,wB=0,mx=-1,thr=127;
-  for(let t=0;t<256;t++){wB+=hist[t];if(!wB)continue;const wF=n-wB;if(!wF)break;
-    sumB+=t*hist[t];const mB=sumB/wB,mF=(sum-sumB)/wF,bt=wB*wF*(mB-mF)*(mB-mF);
-    if(bt>mx){mx=bt;thr=t;}}
-  for(let i=0,j=0;i<d.length;i+=4,j++){let bw=g[j]>thr?255:0;if(inv)bw=255-bw;d[i]=d[i+1]=d[i+2]=bw;}
+  const im=cx.getImageData(0,0,cw,ch),d=im.data,N=cw*ch,g=new Float64Array(N);
+  for(let i=0,j=0;i<d.length;i+=4,j++) g[j]=(d[i]*299+d[i+1]*587+d[i+2]*114)/1000;
+  const W1=cw+1,I=new Float64Array(W1*(ch+1));           // 積分画像
+  for(let y=0;y<ch;y++){let rs=0;for(let x=0;x<cw;x++){rs+=g[y*cw+x];I[(y+1)*W1+(x+1)]=I[y*W1+(x+1)]+rs;}}
+  const rad=Math.max(10,Math.round(cw/14)),C=6;
+  for(let y=0;y<ch;y++){const y1=y>rad?y-rad:0,y2=y+rad<ch?y+rad:ch-1;
+    for(let x=0;x<cw;x++){const x1=x>rad?x-rad:0,x2=x+rad<cw?x+rad:cw-1;
+      const area=(x2-x1+1)*(y2-y1+1);
+      const s=I[(y2+1)*W1+(x2+1)]-I[y1*W1+(x2+1)]-I[(y2+1)*W1+x1]+I[y1*W1+x1];
+      let bw=(g[y*cw+x]*area > s - C*area)?255:0;          // 局所平均-C より明るければ白
+      if(inv)bw=255-bw;
+      const idx=(y*cw+x)<<2; d[idx]=d[idx+1]=d[idx+2]=bw;}}
   cx.putImageData(im,0,0);
 }
 // 反転＋グレースケール＋コントラスト伸張。黒地/緑地の白バーを白飛びから救ってくっきり二値化させる
@@ -398,7 +413,7 @@ function scanLoopZ(){
     }else{
       // 商品/箱の1D：0°は中央帯をOtsuで純白黒化（反転/通常）、90°は全体回転
       const p=zxPhase++ & 3;                 // 0:帯反転 1:帯通常 2:90°反転 3:90°通常
-      if(p<2){ zxDrawBandOtsu(!(p&1)); }
+      if(p<2){ zxDrawBandBW(!(p&1)); }
       else { zxDrawFull(true); if(!(p&1)) zxInvert(); }
       const res=zxDec(cvs,zxHints1D);
       if(res&&res.getBarcodeFormat()!==ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'bar'); }
