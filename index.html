@@ -292,6 +292,11 @@ async function scanLoop(){
       try{codes=annotateCenter((await detector.detect(cvs))||[],sw,sh);}catch(e){}
     }
   }
+  if(!codes.length && window.zxingReadBarcodes){   // 標準エンジンが読めなかった時だけWASM＋ズームで再挑戦（緑地/黒地の反転対応）
+    const isDenpyo=(app==="kenpin"&&mode==="denpyo");
+    const r=await wasmDecode(isDenpyo, !isDenpyo);
+    if(r && (isDenpyo===r.isQR)){ onScan(r.text, r.isQR?'qr':'bar'); rafTimer=setTimeout(scanLoop,60); return; }
+  }
   const best=pickBest(codes);
   if(best)onScan(best.rawValue,best.format);
   rafTimer=setTimeout(scanLoop,60);
@@ -415,6 +420,24 @@ function zxDrawFull(rot){
 }
 let zxPhase=0;
 const WASM_1D=["Code128","EAN-13","EAN-8","ITF","Code39","UPC-A","UPC-E","DataBar","DataBarExpanded","DataBarLimited","PDF417"];
+// zxing-cpp(WASM)で1回読む共通処理。zoom=trueで中央デジタルズーム（細いバー拡大）。iPhone/Android両方から使う
+async function wasmDecode(isDenpyo, zoom){
+  const w=video.videoWidth,h=video.videoHeight;
+  if(!w||!window.zxingReadBarcodes) return null;
+  let cw,ch;
+  if(zoom){ const cW=Math.round(w*0.72),cH=Math.round(h*0.5),cX=(w-cW)>>1,cY=(h-cH)>>1,up=Math.min(1.5,2200/cW);
+    cw=Math.round(cW*up);ch=Math.round(cH*up);
+    cvs.width=cw;cvs.height=ch;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,cX,cY,cW,cH,0,0,cw,ch); }
+  else { const sc=Math.min(1,2000/Math.max(w,h));cw=Math.round(w*sc);ch=Math.round(h*sc);
+    cvs.width=cw;cvs.height=ch;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,0,0,cw,ch); }
+  let im; try{ im=cx.getImageData(0,0,cw,ch); }catch(e){ return null; }
+  try{
+    const res=await window.zxingReadBarcodes(im,{formats:isDenpyo?["QRCode"]:WASM_1D,
+      tryHarder:true,tryInvert:true,tryRotate:true,tryDownscale:true,tryDenoise:true,maxNumberOfSymbols:1});
+    if(res&&res.length&&res[0].text) return {text:res[0].text, isQR:(res[0].format==="QRCode")};
+  }catch(e){}
+  return null;
+}
 async function scanLoopZ(){
   if(!stream){return;}
   const w=video.videoWidth,h=video.videoHeight;
@@ -422,29 +445,10 @@ async function scanLoopZ(){
   if(w){
     const isDenpyo=(app==="kenpin"&&mode==="denpyo");
     if(window.zxingReadBarcodes){
-      // ★高精度デコーダ(zxing-cpp WASM)：反転/回転/高密度に強い。全体を1回で読む
+      // ★高精度デコーダ(zxing-cpp WASM)：反転/回転/高密度に強い。商品は1フレームおきにズーム
       if(!video._logged){ video._logged=true; $("dbg").textContent='高精度読取 '+w+'x'+h+' 検出中...'; }
-      let cw,ch;
-      if(!isDenpyo && (zxPhase++ & 1)){   // 商品モードは1フレームおきに中央デジタルズーム（黒地の細いバーを拡大）
-        const cW=Math.round(w*0.72),cH=Math.round(h*0.5),cX=(w-cW)>>1,cY=(h-cH)>>1,up=Math.min(1.5,2200/cW);
-        cw=Math.round(cW*up);ch=Math.round(cH*up);
-        cvs.width=cw;cvs.height=ch;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,cX,cY,cW,cH,0,0,cw,ch);
-      }else{                               // 全体（高解像度のまま）
-        const sc=Math.min(1,2000/Math.max(w,h));cw=Math.round(w*sc);ch=Math.round(h*sc);
-        cvs.width=cw;cvs.height=ch;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,0,0,cw,ch);
-      }
-      let im; try{ im=cx.getImageData(0,0,cw,ch); }catch(e){}
-      if(im){
-        try{
-          const res=await window.zxingReadBarcodes(im,{
-            formats:isDenpyo?["QRCode"]:WASM_1D,
-            tryHarder:true,tryInvert:true,tryRotate:true,tryDownscale:true,tryDenoise:true,maxNumberOfSymbols:1});
-          if(res&&res.length&&res[0].text){
-            const isQR=(res[0].format==="QRCode");
-            if(isDenpyo===isQR){ hit=true; onScan(res[0].text, isQR?'qr':'bar'); }
-          }
-        }catch(e){ if(!video._errlog){video._errlog=true;$("dbg").textContent='WASM読取エラー:'+e;} }
-      }
+      const r=await wasmDecode(isDenpyo, !isDenpyo && (zxPhase++ & 1));
+      if(r && (isDenpyo===r.isQR)){ hit=true; onScan(r.text, r.isQR?'qr':'bar'); }
     }else{
       // フォールバック：旧JS版ZXing
       if(!video._logged){ video._logged=true; $("dbg").textContent='ZX起動 video '+w+'x'+h+' 検出中...'; }
