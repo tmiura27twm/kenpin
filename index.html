@@ -132,6 +132,11 @@ function fmtExp(s){s=String(s||"");                       // 使用期限を YYY
 function extractGTIN(raw){let s=String(raw).replace(/^\][A-Za-z0-9]/,'').replace(/[()]/g,'');
   if(s.startsWith('01')&&/^\d{14}/.test(s.slice(2)))return s.slice(2,16);
   const m=String(raw).match(/\(?01\)?(\d{14})/);return m?m[1]:null;}
+// 箱(先頭2)・ピース(先頭1)・JAN 全てを同一商品として照合するための真ん中12桁（荷姿と末尾CDを除く）
+function core12(code){const g=extractGTIN(code);const d=g||normBC(code);
+  if(d.length===14)return d.substring(1,13);
+  if(d.length===13)return d.substring(0,12);
+  return '';}
 
 function jsonp(params){return new Promise(res=>{
   const name='cb'+Date.now()+Math.floor(Math.random()*1000);
@@ -184,12 +189,13 @@ async function loadDenpyo(qr){
   lastCode="";startScan();}
 function findItem(code){
   if(!data)return null;
-  const gtin=extractGTIN(code),bc=normBC(code);
+  const gtin=extractGTIN(code),bc=normBC(code),cc=core12(code);
   let hit=null;
   for(const it of data.items){
     if(!it.scannable)continue;
     const ij=normBC(it.jan),ig=normBC(it.gtin);
-    const m=(gtin&&gtin===ig)||bc===ij||bc===ig||(ig&&bc===ig.replace(/^0+/,''))||(ij&&bc===ij.replace(/^0+/,''));
+    const m=(gtin&&gtin===ig)||bc===ij||bc===ig||(ig&&bc===ig.replace(/^0+/,''))||(ij&&bc===ij.replace(/^0+/,''))
+      ||(cc&&(cc===core12(it.gtin)||cc===core12(it.jan)));
     if(m){const need=it.数量,got=scanned[it.商品cd+it.ロット]||0;if(got<need)return it;if(!hit)hit=it;}
   }return hit;}
 function matchItem(code){
@@ -292,14 +298,18 @@ function pickBest(codes){
   return null;
 }
 // ===== ZXing版（iPhone等・反転バーコード対応）=====
-let zxReader=null, zxHints=null;
+// QRとバーコードでヒントを分ける＝1D読取時はQR/DataMatrixを外して高速化（iPhoneでも安定）
+let zxReader=null, zxHintsQR=null, zxHints1D=null;
 function ensureZx(){
   if(zxReader)return;
-  zxHints=new Map();
-  zxHints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[
-    ZXing.BarcodeFormat.QR_CODE,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.EAN_13,
-    ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.ITF,ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.CODE_39]);
-  zxHints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+  zxHintsQR=new Map();
+  zxHintsQR.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.QR_CODE]);
+  zxHintsQR.set(ZXing.DecodeHintType.TRY_HARDER,true);
+  zxHints1D=new Map();
+  zxHints1D.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[
+    ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.ITF,ZXing.BarcodeFormat.CODE_39,ZXing.BarcodeFormat.UPC_A]);
+  zxHints1D.set(ZXing.DecodeHintType.TRY_HARDER,true);
   zxReader=new ZXing.MultiFormatReader();
 }
 async function startZxing(){
@@ -318,33 +328,38 @@ async function startZxing(){
   setupZoom();
   scanLoopZ();
 }
-function zxDecodeCanvas(canvas){
+function zxDec(canvas,hints){
   try{
     const src=new ZXing.HTMLCanvasElementLuminanceSource(canvas);
-    return zxReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src)), zxHints);
+    return zxReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src)), hints);
   }catch(e){ return null; }
   finally{ try{ zxReader.reset(); }catch(e){} }
 }
+function zxInvert(){const im=cx.getImageData(0,0,cvs.width,cvs.height),d=im.data;
+  for(let i=0;i<d.length;i+=4){d[i]=255-d[i];d[i+1]=255-d[i+1];d[i+2]=255-d[i+2];}
+  cx.putImageData(im,0,0);}
 function scanLoopZ(){
   if(!stream){return;}
   const w=video.videoWidth,h=video.videoHeight;
+  let hit=false;
   if(w){
     if(!video._logged){ video._logged=true; $("dbg").textContent='ZX起動 video '+w+'x'+h+' 検出中...'; }
-    cvs.width=w;cvs.height=h;cx.drawImage(video,0,0,w,h);
-    let res=zxDecodeCanvas(cvs);                        // 通常
-    if(!res){                                            // 反転（ピクセルを反転＝Androidと同方式で黒地白バー対応）
-      const im=cx.getImageData(0,0,w,h),d=im.data;
-      for(let i=0;i<d.length;i+=4){d[i]=255-d[i];d[i+1]=255-d[i+1];d[i+2]=255-d[i+2];}
-      cx.putImageData(im,0,0);
-      res=zxDecodeCanvas(cvs);
-    }
-    if(res){
-      const isQR=(res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE);
-      const okMode=(app==="kenpin"&&mode==="denpyo")?isQR:!isQR;   // 伝票=QR / 商品=非QR のみ採用
-      if(okMode) onScan(res.getText(), isQR?'qr':'bar');
+    if(app==="kenpin"&&mode==="denpyo"){
+      // 伝票QR：全体を読む（通常→反転）
+      cvs.width=w;cvs.height=h;cx.drawImage(video,0,0,w,h);
+      let res=zxDec(cvs,zxHintsQR); if(!res){ zxInvert(); res=zxDec(cvs,zxHintsQR); }
+      if(res&&res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'qr'); }
+    }else{
+      // 商品/箱の1Dバーコード：中央の帯を切り出して読む（小さめ・遠め・箱でも安定）。通常→反転→ダメなら全体
+      const bh=Math.max(80,Math.round(h*0.55)), by=Math.round((h-bh)/2);
+      cvs.width=w;cvs.height=bh;cx.drawImage(video,0,by,w,bh,0,0,w,bh);
+      let res=zxDec(cvs,zxHints1D); if(!res){ zxInvert(); res=zxDec(cvs,zxHints1D); }
+      if(!res){ cvs.width=w;cvs.height=h;cx.drawImage(video,0,0,w,h);
+                res=zxDec(cvs,zxHints1D); if(!res){ zxInvert(); res=zxDec(cvs,zxHints1D); } }
+      if(res&&res.getBarcodeFormat()!==ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'bar'); }
     }
   }
-  rafTimer=setTimeout(scanLoopZ,100);
+  rafTimer=setTimeout(scanLoopZ, hit?500:70);
 }
 function stopScan(){
   if(rafTimer){clearTimeout(rafTimer);rafTimer=null;}
