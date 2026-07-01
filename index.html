@@ -315,10 +315,14 @@ function ensureZx(){
 async function startZxing(){
   try{ ensureZx(); }
   catch(e){$("msg").innerHTML='<span class="ng">読取ライブラリ初期化失敗: '+e+'</span>';$("dbg").textContent='ZXing初期化NG: '+e;return;}
-  try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
-  }catch(e){$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e+'</span>';return;}
+  try{   // 高解像度＝小さい/遠いバーコードも細部が残る
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});
+  }catch(e){
+    try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}); }
+    catch(e2){$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e2+'</span>';return;}
+  }
   track=stream.getVideoTracks()[0];
+  try{ await track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch(e){}   // オートフォーカス
   video=document.createElement('video');
   video.setAttribute('playsinline','true');video.setAttribute('muted','true');video.muted=true;video.autoplay=true;
   video.srcObject=stream;
@@ -350,11 +354,13 @@ function scanLoopZ(){
       let res=zxDec(cvs,zxHintsQR); if(!res){ zxInvert(); res=zxDec(cvs,zxHintsQR); }
       if(res&&res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'qr'); }
     }else{
-      // 商品/箱の1Dバーコード：中央の帯を切り出して読む（小さめ・遠め・箱でも安定）。通常→反転→ダメなら全体
-      const bh=Math.max(80,Math.round(h*0.55)), by=Math.round((h-bh)/2);
-      cvs.width=w;cvs.height=bh;cx.drawImage(video,0,by,w,bh,0,0,w,bh);
+      // 商品/箱の1Dバーコード：中央の帯を切り出し、幅1080以下に縮小して読む（高速＝連続処理でき、遠め/箱でも安定）
+      const bh=Math.max(80,Math.round(h*0.6)), by=Math.round((h-bh)/2), sc=Math.min(1,1080/w);
+      cvs.width=Math.round(w*sc);cvs.height=Math.round(bh*sc);
+      cx.drawImage(video,0,by,w,bh,0,0,cvs.width,cvs.height);
       let res=zxDec(cvs,zxHints1D); if(!res){ zxInvert(); res=zxDec(cvs,zxHints1D); }
-      if(!res){ cvs.width=w;cvs.height=h;cx.drawImage(video,0,0,w,h);
+      if(!res){ const fs=Math.min(1,1080/w);   // ダメなら全体（縮小）も試す
+                cvs.width=Math.round(w*fs);cvs.height=Math.round(h*fs);cx.drawImage(video,0,0,w,h,0,0,cvs.width,cvs.height);
                 res=zxDec(cvs,zxHints1D); if(!res){ zxInvert(); res=zxDec(cvs,zxHints1D); } }
       if(res&&res.getBarcodeFormat()!==ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'bar'); }
     }
