@@ -292,34 +292,37 @@ function pickBest(codes){
   return null;
 }
 // ===== ZXing版（iPhone等・反転バーコード対応）=====
-let zxReader=null;
+let zxReader=null, zxHints=null;
 function ensureZx(){
   if(zxReader)return;
-  const hints=new Map();
-  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[
+  zxHints=new Map();
+  zxHints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[
     ZXing.BarcodeFormat.QR_CODE,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.EAN_13,
     ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.ITF,ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.CODE_39]);
-  hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+  zxHints.set(ZXing.DecodeHintType.TRY_HARDER,true);
   zxReader=new ZXing.MultiFormatReader();
-  zxReader.setHints(hints);
 }
 async function startZxing(){
-  ensureZx();
+  try{ ensureZx(); }
+  catch(e){$("msg").innerHTML='<span class="ng">読取ライブラリ初期化失敗: '+e+'</span>';$("dbg").textContent='ZXing初期化NG: '+e;return;}
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
   }catch(e){$("msg").innerHTML='<span class="ng">カメラ起動失敗: '+e+'</span>';return;}
   track=stream.getVideoTracks()[0];
-  video=document.createElement('video');video.setAttribute('playsinline','true');video.muted=true;
-  video.srcObject=stream;try{await video.play();}catch(e){}
-  const r=$("reader");r.innerHTML='';r.appendChild(video);video.style.width='100%';
+  video=document.createElement('video');
+  video.setAttribute('playsinline','true');video.setAttribute('muted','true');video.muted=true;video.autoplay=true;
+  video.srcObject=stream;
+  const r=$("reader");r.innerHTML='';r.appendChild(video);video.style.width='100%';   // DOM追加→再生（iOS対策）
+  try{ await video.play(); }catch(e){}
+  video._logged=false;
   setupZoom();
   scanLoopZ();
 }
-function zxDecode(){
+function zxTry(inverted){
   try{
-    const src=new ZXing.HTMLCanvasElementLuminanceSource(cvs);
-    try{ return zxReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src))); }catch(e){}
-    return zxReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src.invert())));  // 反転（黒地白バー）
+    var src=new ZXing.HTMLCanvasElementLuminanceSource(cvs);
+    if(inverted) src=src.invert();
+    return zxReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src)), zxHints);
   }catch(e){ return null; }
   finally{ try{ zxReader.reset(); }catch(e){} }
 }
@@ -327,15 +330,16 @@ function scanLoopZ(){
   if(!stream){return;}
   const w=video.videoWidth,h=video.videoHeight;
   if(w){
+    if(!video._logged){ video._logged=true; $("dbg").textContent='ZX起動 video '+w+'x'+h+' 検出中...'; }
     cvs.width=w;cvs.height=h;cx.drawImage(video,0,0,w,h);
-    const res=zxDecode();
+    const res=zxTry(false)||zxTry(true);   // 通常→反転
     if(res){
       const isQR=(res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE);
       const okMode=(app==="kenpin"&&mode==="denpyo")?isQR:!isQR;   // 伝票=QR / 商品=非QR のみ採用
-      if(okMode) onScan(res.getText(), isQR?'qr_code':'barcode');
+      if(okMode) onScan(res.getText(), isQR?'qr':'bar');
     }
   }
-  rafTimer=setTimeout(scanLoopZ,110);
+  rafTimer=setTimeout(scanLoopZ,100);
 }
 function stopScan(){
   if(rafTimer){clearTimeout(rafTimer);rafTimer=null;}
