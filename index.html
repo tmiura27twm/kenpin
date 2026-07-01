@@ -338,11 +338,22 @@ async function startZxing(){
   scanLoopZ();
 }
 function zxDec(canvas,hints){
-  try{
-    const src=new ZXing.HTMLCanvasElementLuminanceSource(canvas);
-    return zxReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src)), hints);
-  }catch(e){ return null; }
-  finally{ try{ zxReader.reset(); }catch(e){} }
+  const src=new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+  const bins=[ZXing.HybridBinarizer];                       // 2D向け
+  if(ZXing.GlobalHistogramBinarizer) bins.push(ZXing.GlobalHistogramBinarizer);  // 1D定番（反転・低コントラストに強い）
+  for(const B of bins){
+    try{ const r=zxReader.decode(new ZXing.BinaryBitmap(new B(src)), hints); if(r) return r; }
+    catch(e){}
+    finally{ try{ zxReader.reset(); }catch(e){} }
+  }
+  return null;
+}
+// バーコードは横長なので、中央の帯だけを切り出して読む（周囲の白箱を除外＝GlobalHistogramの二値化が安定）
+function zxDrawBand(){
+  const w=video.videoWidth,h=video.videoHeight,by=Math.round(h*0.2),bh=Math.round(h*0.6),sc=Math.min(1,1400/w);
+  cx.setTransform(1,0,0,1,0,0);
+  cvs.width=Math.round(w*sc);cvs.height=Math.round(bh*sc);
+  cx.drawImage(video,0,by,w,bh,0,0,cvs.width,cvs.height);
 }
 // 反転＋グレースケール＋コントラスト伸張。黒地/緑地の白バーを白飛びから救ってくっきり二値化させる
 function invBoost(d){
@@ -375,9 +386,10 @@ function scanLoopZ(){
       const res=zxDec(cvs,zxHintsQR);
       if(res&&res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'qr'); }
     }else{
-      // 商品/箱の1D：1フレーム1デコードで軽量。位相で 0°/90° × 通常/反転 を順に試す（向き・反転どちらも対応）
-      const p=zxPhase++ & 3;                 // 0:0°反転 1:0°通常 2:90°反転 3:90°通常（反転を先に＝黒地/緑地優先）
-      zxDrawFull(p>=2); if(!(p&1)) zxInvert();
+      // 商品/箱の1D：0°は中央帯、90°は全体回転。反転を先に試す（黒地/緑地の白バー優先）
+      const p=zxPhase++ & 3;                 // 0:0°反転 1:0°通常 2:90°反転 3:90°通常
+      if(p>=2) zxDrawFull(true); else zxDrawBand();
+      if(!(p&1)) zxInvert();
       const res=zxDec(cvs,zxHints1D);
       if(res&&res.getBarcodeFormat()!==ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'bar'); }
     }
