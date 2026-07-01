@@ -276,9 +276,7 @@ async function scanLoop(){
     if(!codes.length){   // 反転（黒地/緑地の白バー対応）を全体で
       const sc=Math.min(1,1280/w),sw=Math.round(w*sc),sh=Math.round(h*sc);
       cvs.width=sw;cvs.height=sh;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,0,0,sw,sh);
-      const im=cx.getImageData(0,0,sw,sh),d=im.data;
-      for(let i=0;i<d.length;i+=4){d[i]=255-d[i];d[i+1]=255-d[i+1];d[i+2]=255-d[i+2];}
-      cx.putImageData(im,0,0);
+      const im=cx.getImageData(0,0,sw,sh); invBoost(im.data); cx.putImageData(im,0,0);
       try{codes=annotateCenter((await detector.detect(cvs))||[],sw,sh);}catch(e){}
     }
   }
@@ -346,9 +344,15 @@ function zxDec(canvas,hints){
   }catch(e){ return null; }
   finally{ try{ zxReader.reset(); }catch(e){} }
 }
-function zxInvert(){const im=cx.getImageData(0,0,cvs.width,cvs.height),d=im.data;
-  for(let i=0;i<d.length;i+=4){d[i]=255-d[i];d[i+1]=255-d[i+1];d[i+2]=255-d[i+2];}
-  cx.putImageData(im,0,0);}
+// 反転＋グレースケール＋コントラスト伸張。黒地/緑地の白バーを白飛びから救ってくっきり二値化させる
+function invBoost(d){
+  let mn=255,mx=0;
+  for(let i=0;i<d.length;i+=4){const g=255-((d[i]*299+d[i+1]*587+d[i+2]*114)/1000|0);
+    d[i]=d[i+1]=d[i+2]=g; if(g<mn)mn=g; if(g>mx)mx=g;}
+  const rng=Math.max(1,mx-mn);
+  if(rng<230){for(let i=0;i<d.length;i+=4){let v=(d[i]-mn)*255/rng; v=v<0?0:v>255?255:v|0; d[i]=d[i+1]=d[i+2]=v;}}
+}
+function zxInvert(){const im=cx.getImageData(0,0,cvs.width,cvs.height); invBoost(im.data); cx.putImageData(im,0,0);}
 // 映像を cvs に描画。rot=trueで90°回転（縦向きバーコード対策）。長辺1200pxに縮小して高速化
 function zxDrawFull(rot){
   const w=video.videoWidth,h=video.videoHeight,sc=Math.min(1,1200/Math.max(w,h));
