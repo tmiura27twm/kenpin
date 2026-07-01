@@ -266,15 +266,18 @@ async function startScan(){
 async function scanLoop(){
   if(!stream)return;
   let codes=[];
-  try{codes=(await detector.detect(video))||[];}catch(e){}
-  if(!codes.length && video.videoWidth){
-    try{
-      const w=video.videoWidth,h=video.videoHeight,sc=Math.min(1,1100/w),sw=Math.round(w*sc),sh=Math.round(h*sc);
-      cvs.width=sw;cvs.height=sh;cx.drawImage(video,0,0,sw,sh);
+  if(video.videoWidth){
+    // 画面に映っている中央の帯だけを検出対象にする（枠外の商品を拾わない）。QR読取時は全体
+    const w=video.videoWidth,h=video.videoHeight,band=(app==="kenpin"&&mode==="denpyo")?1:0.68;
+    const bh=Math.round(h*band),by=Math.round((h-bh)/2),sc=Math.min(1,1280/w),sw=Math.round(w*sc),sh=Math.round(bh*sc);
+    cvs.width=sw;cvs.height=sh;cx.setTransform(1,0,0,1,0,0);cx.drawImage(video,0,by,w,bh,0,0,sw,sh);
+    try{codes=(await detector.detect(cvs))||[];}catch(e){}
+    if(!codes.length){   // 反転（黒地/緑地の白バー対応）
       const im=cx.getImageData(0,0,sw,sh),d=im.data;
       for(let i=0;i<d.length;i+=4){d[i]=255-d[i];d[i+1]=255-d[i+1];d[i+2]=255-d[i+2];}
-      cx.putImageData(im,0,0);codes=(await detector.detect(cvs))||[];
-    }catch(e){}
+      cx.putImageData(im,0,0);
+      try{codes=(await detector.detect(cvs))||[];}catch(e){}
+    }
   }
   const best=pickBest(codes);
   if(best)onScan(best.rawValue,best.format);
@@ -342,26 +345,31 @@ function zxDec(canvas,hints){
 function zxInvert(){const im=cx.getImageData(0,0,cvs.width,cvs.height),d=im.data;
   for(let i=0;i<d.length;i+=4){d[i]=255-d[i];d[i+1]=255-d[i+1];d[i+2]=255-d[i+2];}
   cx.putImageData(im,0,0);}
+// 映像を cvs に描画。rot=trueで90°回転（縦向きバーコード対策）。長辺1600pxに縮小して高速化
+function zxDrawFull(rot){
+  const w=video.videoWidth,h=video.videoHeight,sc=Math.min(1,1600/Math.max(w,h));
+  const dw=Math.round(w*sc),dh=Math.round(h*sc);
+  cx.setTransform(1,0,0,1,0,0);
+  if(rot){ cvs.width=dh;cvs.height=dw; cx.translate(dh,0); cx.rotate(Math.PI/2); cx.drawImage(video,0,0,dw,dh); }
+  else   { cvs.width=dw;cvs.height=dh; cx.drawImage(video,0,0,dw,dh); }
+  cx.setTransform(1,0,0,1,0,0);
+}
 let zxPhase=0;
 function scanLoopZ(){
   if(!stream){return;}
-  const w=video.videoWidth,h=video.videoHeight;
+  const w=video.videoWidth;
   let hit=false;
   if(w){
-    if(!video._logged){ video._logged=true; $("dbg").textContent='ZX起動 video '+w+'x'+h+' 検出中...'; }
+    if(!video._logged){ video._logged=true; $("dbg").textContent='ZX起動 video '+w+'x'+video.videoHeight+' 検出中...'; }
     if(app==="kenpin"&&mode==="denpyo"){
-      // 伝票QR：全体を読む（通常/反転を1フレームずつ）
-      cvs.width=w;cvs.height=h;cx.drawImage(video,0,0,w,h);
-      if(zxPhase++&1) zxInvert();
+      // 伝票QR：全体（通常/反転を1フレームずつ）。QRは向き不問なので回転不要
+      zxDrawFull(false); if(zxPhase++&1) zxInvert();
       const res=zxDec(cvs,zxHintsQR);
       if(res&&res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'qr'); }
     }else{
-      // 商品/箱の1D：1フレーム1デコードで軽量化。位相を回して 帯/全体 × 通常/反転 を順に試す（緑地の反転バーコードも対応）
-      const phase=zxPhase++ & 3, useBand=(phase<2), inv=(phase&1), sc=Math.min(1,1024/w);
-      if(useBand){ const bh=Math.round(h*0.6), by=Math.round((h-bh)/2);
-        cvs.width=Math.round(w*sc);cvs.height=Math.round(bh*sc);cx.drawImage(video,0,by,w,bh,0,0,cvs.width,cvs.height); }
-      else { cvs.width=Math.round(w*sc);cvs.height=Math.round(h*sc);cx.drawImage(video,0,0,w,h,0,0,cvs.width,cvs.height); }
-      if(inv) zxInvert();
+      // 商品/箱の1D：1フレーム1デコード。位相で 0°/90° × 通常/反転 を順に試す（向き・反転どちらも対応）
+      const p=zxPhase++ & 3;                 // 0:0°  1:0°反転  2:90°  3:90°反転
+      zxDrawFull(p>=2); if(p&1) zxInvert();
       const res=zxDec(cvs,zxHints1D);
       if(res&&res.getBarcodeFormat()!==ZXing.BarcodeFormat.QR_CODE){ hit=true; onScan(res.getText(),'bar'); }
     }
