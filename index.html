@@ -97,6 +97,8 @@
   <div class="card" id="card">
     <div class="hd"><span class="tot" id="tot"></span><div class="nm" id="nm"></div>
       <div class="sub">棚番 <span class="tana" id="stana"></span>　商品CD <span id="scd"></span></div>
+      <div class="sub"><span style="background:#eceff1;border-radius:5px;padding:2px 8px;margin-right:6px;">適正 <b id="stekisei"></b></span><span style="background:#eceff1;border-radius:5px;padding:2px 8px;">発注 <b id="shatchu"></b></span></div>
+      <div class="sub" id="sbiko" style="color:#bf6a00;"></div>
       <div class="sub" id="updated" style="color:#888;font-size:12px;"></div></div>
     <table><thead><tr><th>ロット</th><th class="r">在庫</th><th>使用期限</th></tr></thead><tbody id="lots"></tbody></table>
   </div>
@@ -225,6 +227,8 @@ async function lookupStock(code){
   }
   $("nm").textContent=j.商品名;$("stana").textContent=j.棚番||'-';$("scd").textContent=j.商品CD;
   $("tot").textContent=j.在庫数+' 個';$("tot").style.color=(j.在庫数>0?'#00695c':'#c62828');
+  $("stekisei").textContent=(j.適正数!=null?j.適正数:'-');$("shatchu").textContent=(j.発注数!=null?j.発注数:'-');
+  $("sbiko").textContent=j.備考?('備考: '+j.備考):'';
   $("lots").innerHTML=(j.lots&&j.lots.length)
     ?j.lots.map(l=>'<tr><td>'+l.lot+'</td><td class="r"><b>'+l.qty+'</b></td><td>'+fmtExp(l.exp)+'</td></tr>').join('')
     :'<tr><td colspan="3" style="text-align:center;color:#c62828;font-weight:bold;">在庫なし</td></tr>';
