@@ -318,10 +318,9 @@ async function startZxing(){
   setupZoom();
   scanLoopZ();
 }
-function zxTry(inverted){
+function zxDecodeCanvas(canvas){
   try{
-    var src=new ZXing.HTMLCanvasElementLuminanceSource(cvs);
-    if(inverted) src=src.invert();
+    const src=new ZXing.HTMLCanvasElementLuminanceSource(canvas);
     return zxReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src)), zxHints);
   }catch(e){ return null; }
   finally{ try{ zxReader.reset(); }catch(e){} }
@@ -332,7 +331,13 @@ function scanLoopZ(){
   if(w){
     if(!video._logged){ video._logged=true; $("dbg").textContent='ZX起動 video '+w+'x'+h+' 検出中...'; }
     cvs.width=w;cvs.height=h;cx.drawImage(video,0,0,w,h);
-    const res=zxTry(false)||zxTry(true);   // 通常→反転
+    let res=zxDecodeCanvas(cvs);                        // 通常
+    if(!res){                                            // 反転（ピクセルを反転＝Androidと同方式で黒地白バー対応）
+      const im=cx.getImageData(0,0,w,h),d=im.data;
+      for(let i=0;i<d.length;i+=4){d[i]=255-d[i];d[i+1]=255-d[i+1];d[i+2]=255-d[i+2];}
+      cx.putImageData(im,0,0);
+      res=zxDecodeCanvas(cvs);
+    }
     if(res){
       const isQR=(res.getBarcodeFormat()===ZXing.BarcodeFormat.QR_CODE);
       const okMode=(app==="kenpin"&&mode==="denpyo")?isQR:!isQR;   // 伝票=QR / 商品=非QR のみ採用
