@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>営業ツール</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1565c0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="営業ツール">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  body{margin:0;font-family:system-ui,sans-serif;background:#1565c0;color:#fff;
+       display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;}
+  .spinner{width:46px;height:46px;border:5px solid rgba(255,255,255,.3);border-top-color:#fff;
+           border-radius:50%;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  p{margin-top:16px;font-size:16px;font-weight:bold;}
+</style>
+</head>
+<body>
+<div class="spinner"></div>
+<p>営業ツールを開いています...</p>
+<script>
+// 営業ツール本体（Apps Script）へ即遷移。ホーム画面から起動→このページ→本体、の流れ。
+const EIGYO_URL = "https://script.google.com/macros/s/AKfycbxm443-W8iZcuGkjUond9cxHb6URkxXFieirrUL27diiIGwsSx8liGMMsK8WpakKOAv/exec";
+if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
+location.replace(EIGYO_URL);
+</script>
+</body>
+</html>
