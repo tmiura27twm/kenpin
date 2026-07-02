@@ -30,6 +30,7 @@
   .menu-btn small{display:block;margin-top:6px;font-size:14px;font-weight:normal;opacity:.9;}
   .menu-btn.kenpin{background:#1565c0;}
   .menu-btn.stock{background:#00695c;}
+  .menu-btn.shukko{background:#ef6c00;}
   /* スキャン共通 */
   #reader{width:100%;max-width:480px;margin:0 auto;height:22vh;overflow:hidden;background:#000;border-radius:8px;}
   body.qrmode #reader{width:22vh;max-width:22vh;height:22vh;}   /* 伝票QR読取時は四角（高さそのまま） */
@@ -75,6 +76,7 @@
 <div id="home">
   <button class="menu-btn kenpin" onclick="openKenpin()">📦 検品<small>伝票QR → 商品を照合</small></button>
   <button class="menu-btn stock" onclick="openStock()">🔍 在庫検索<small>商品バーコード → 在庫確認</small></button>
+  <button class="menu-btn shukko" onclick="openShukko()">🚚 出庫リスト<small>配送ルート別のピッキング</small></button>
 </div>
 
 <!-- スキャン（共通） -->
@@ -122,6 +124,7 @@
 <script>
 // ▼ Apps ScriptのウェブアプリURL
 const APPS_URL = "https://script.google.com/macros/s/AKfycbxe7-GFzt6NF3TzfaIOfM-JM3YpWthCLMwbaF22KPBB7vbXmuOd-dRGYMikTxPqatMc/exec";
+const SHUKKO_URL = "https://script.google.com/macros/s/AKfycbzMRldtxxFBD3rJKIEEz9-HnpcawxGGm4h84CPG09fnVXg2TKPfMtUhR_zks7GT-4Qu/exec";
 const ACCESS_PIN = "";
 
 let app="home";          // home / kenpin / stock
@@ -171,6 +174,7 @@ function openStock(){app="stock";data=null;lastCode="";document.body.className="
   $("home").style.display="none";$("scan").style.display="block";$("kenpinResult").style.display="none";$("stockResult").style.display="block";
   $("card").style.display="none";$("btnNext").style.display="none";$("loading").style.display="none";$("stockErr").style.display="none";$("msg").textContent="商品のバーコードを読み取ってください";
   startScan();}
+function openShukko(){stopScan();window.open(SHUKKO_URL,'_blank')||(location.href=SHUKKO_URL);}
 function goHome(){stopScan();app="home";lastCode="";document.body.className="";
   $("title").textContent="📋 メニュー";$("btnHome").style.display="none";$("loading").style.display="none";
   $("home").style.display="block";$("scan").style.display="none";$("kenpinResult").style.display="none";$("stockResult").style.display="none";$("msg").textContent="";}
