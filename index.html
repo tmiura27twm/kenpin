@@ -125,6 +125,7 @@
 // ▼ Apps ScriptのウェブアプリURL
 const APPS_URL = "https://script.google.com/macros/s/AKfycbxe7-GFzt6NF3TzfaIOfM-JM3YpWthCLMwbaF22KPBB7vbXmuOd-dRGYMikTxPqatMc/exec";
 const SHUKKO_URL = "https://script.google.com/macros/s/AKfycbzMRldtxxFBD3rJKIEEz9-HnpcawxGGm4h84CPG09fnVXg2TKPfMtUhR_zks7GT-4Qu/exec";
+const OUT_SS = "1seWjCprsG-jSVH2RtrcSbOxO59WFAbW7ijiMNrMpbeM";   // 出庫スプシ（伝票一覧・検品済ログを直読み＝照会を高速化）
 const ACCESS_PIN = "";
 
 let app="home";          // home / kenpin / stock
@@ -162,6 +163,63 @@ function jsonp(params){return new Promise(res=>{
   document.body.appendChild(s);});}
 function showLoad(){$("scan").style.display="none";$("kenpinResult").style.display="none";$("stockResult").style.display="none";$("loading").style.display="block";}
 function hideLoad(){$("loading").style.display="none";}
+
+/* ===== 伝票一覧の先読み（照会を一瞬にする）=====
+   検品を開いた時点で伝票一覧＋検品済ログをスプシから直読みしておき、QR読取時はスマホ内で即照会。
+   読み込み前や見つからない時は従来のApps Script照会に自動フォールバック。 */
+let dnRows=null, dnIdx=null, dnLog=null, dnLoadedAt=0;
+function gvCell(row,i){const c=row.c[i];return c?(c.f!=null?c.f:(c.v!=null?String(c.v):"")):"";}
+function gvNum(row,i){const c=row.c[i];return (c&&c.v!=null)?Number(c.v):0;}
+function preloadDenpyo(force){
+  const now=Date.now();
+  if(!force && dnRows && now-dnLoadedAt<5*60*1000) return;   // 5分以内なら再利用
+  const base="https://docs.google.com/spreadsheets/d/"+OUT_SS+"/gviz/tq";
+  const load=src=>{const s=document.createElement("script");s.src=src;s.onerror=()=>{};document.body.appendChild(s);};
+  load(base+"?sheet="+encodeURIComponent("伝票一覧")+"&tqx=responseHandler:onDnBody");
+  load(base+"?sheet="+encodeURIComponent("検品済ログ")+"&tqx=responseHandler:onDnLog");
+}
+window.onDnBody=function(resp){
+  try{
+    if(resp.status!=="ok")return;
+    const rows=resp.table.rows;
+    // ヘッダーは1行目（数値列では文字が落ちるため、文字列で残っている列名＋既知の並びで補完）
+    const KNOWN=['伝票日付','伝票番号','伝票行番号','区分名','得意先cd','得意先名','商品cd','商品名','包装単位名','ロットNO','使用期限','数量','単価','合計','jan','gtin'];
+    dnIdx={}; KNOWN.forEach((k,i)=>dnIdx[k]=i);
+    dnRows=rows; dnLoadedAt=Date.now();
+  }catch(e){}
+};
+window.onDnLog=function(resp){
+  try{
+    dnLog={};
+    if(resp.status!=="ok")return;
+    const rows=resp.table.rows;
+    // 検品済ログタブが未作成だと別タブが返るためヘッダー検証（A1=取引NO のときだけ採用）
+    if(!rows.length || gvCell(rows[0],0)!=="取引NO"){ if(rows.length&&/^\d+$/.test(gvCell(rows[0],0))){/*ヘッダーが数値列で落ちた場合は列構成で判断*/}else return; }
+    for(let i=0;i<rows.length;i++){
+      const no=String(gvCell(rows[i],0)).replace(/[^0-9]/g,"");
+      if(no) dnLog[no]=gvCell(rows[i],2);   // 最終行が最新
+    }
+  }catch(e){ dnLog={}; }
+};
+function lookupLocal(qr){
+  if(!dnRows||!dnIdx)return null;
+  const digits=String(qr).replace(/[^0-9]/g,"");
+  const no=(digits.charAt(0)==="1"&&digits.length>1)?digits.substring(1):digits;
+  if(!no)return null;
+  const ib=dnIdx, items=[]; let toku="", day="";
+  for(let r=1;r<dnRows.length;r++){
+    const row=dnRows[r];
+    if(String(gvCell(row,ib['伝票番号'])).replace(/[^0-9]/g,"")!==no)continue;
+    toku=toku||gvCell(row,ib['得意先名']); day=day||gvCell(row,ib['伝票日付']);
+    const jan=gvCell(row,ib['jan']).trim(), gtin=gvCell(row,ib['gtin']).trim();
+    items.push({商品名:gvCell(row,ib['商品名']).trim(), 数量:gvNum(row,ib['数量']),
+      ロット:gvCell(row,ib['ロットNO']).trim(), 商品cd:gvCell(row,ib['商品cd']).trim(),
+      jan:jan, gtin:gtin, scannable:!!(jan||gtin)});
+  }
+  if(!items.length)return null;   // ローカルに無い→サーバーで再確認（新しい伝票の可能性）
+  return {ok:true, 取引NO:no, 得意先:toku, 取引日:day, items:items,
+          検品済:(dnLog&&dnLog[no])?dnLog[no]:""};
+}
 // 手入力欄の文言をモードに合わせる（伝票QR段階＝伝票No. / 商品段階＝1498…）
 function setManualHint(){
   $("manualIn").placeholder=(app==="kenpin"&&mode==="denpyo")
@@ -174,7 +232,7 @@ function openKenpin(){app="kenpin";mode="denpyo";data=null;scanned={};lastCode="
   $("title").textContent="📦 検品";$("btnHome").style.display="inline-block";$("btnReset").style.display="inline-block";
   $("home").style.display="none";$("scan").style.display="block";$("kenpinResult").style.display="block";$("stockResult").style.display="none";$("loading").style.display="none";
   $("info").textContent="伝票QRを読み取ってください";$("tb").innerHTML="";$("done").style.display="none";$("msg").textContent="";
-  setManualHint();startScan();}
+  setManualHint();preloadDenpyo();startScan();}
 function openStock(){app="stock";data=null;lastCode="";document.body.className="stockmode";
   $("title").textContent="🔍 在庫検索";$("btnHome").style.display="inline-block";$("btnReset").style.display="none";
   $("home").style.display="none";$("scan").style.display="block";$("kenpinResult").style.display="none";$("stockResult").style.display="block";
@@ -197,8 +255,11 @@ function onScan(text,fmt){
 /* ===== 検品 ===== */
 async function loadDenpyo(qr){
   stopScan();showLoad();                                   // QR認識→カメラOFF＋照会中（無音・無点滅・無振動）
-  const p={denpyo:qr}; if(ACCESS_PIN)p.pin=ACCESS_PIN;
-  const j=await jsonp(p);
+  let j=lookupLocal(qr);                                   // 先読みデータから即照会（一瞬）
+  if(!j){                                                  // 未ロード/見つからない時だけサーバー照会（従来）
+    const p={denpyo:qr}; if(ACCESS_PIN)p.pin=ACCESS_PIN;
+    j=await jsonp(p);
+  }
   hideLoad();$("scan").style.display="block";$("kenpinResult").style.display="block";
   if(!j.ok){ // 伝票なし→QR読取(四角)に戻る
     document.body.className="kenpinmode qrmode";mode="denpyo";data=null;
@@ -206,7 +267,11 @@ async function loadDenpyo(qr){
     setManualHint();lastCode="";startScan();return;
   }
   data=j;scanned={};mode="item";document.body.className="kenpinmode";   // 商品スキャンは横長カメラ
-  $("info").innerHTML='伝票 <b>'+j.取引NO+'</b>　'+(j.得意先||"")+'　'+fmtDay(j.取引日);
+  const st=j.検品済
+    ?'<span style="background:#2e7d32;color:#fff;border-radius:6px;padding:2px 8px;font-size:13px;white-space:nowrap;">✅ 検品済み '+j.検品済+'</span>'
+    :'<span style="background:#ef6c00;color:#fff;border-radius:6px;padding:2px 8px;font-size:13px;">未検品</span>';
+  $("info").innerHTML='伝票 <b>'+j.取引NO+'</b>　'+(j.得意先||"")+'　'+fmtDay(j.取引日)+'　'+st;
+  $("done").innerHTML='✅ 検品完了（全て一致）';
   renderItems();$("msg").innerHTML='商品のバーコードを順に読み取ってください';
   setManualHint();lastCode="";startScan();}
 function findItem(code){
@@ -240,7 +305,21 @@ function renderItems(){
 function checkDone(){
   const all=data.items.filter(it=>it.scannable).every(it=>(scanned[it.商品cd+it.ロット]||0)>=it.数量);
   $("done").style.display=all?"block":"none";
-  if(all){beep(true);if(navigator.vibrate)navigator.vibrate([60,40,60,40,120]);}}
+  if(all){beep(true);if(navigator.vibrate)navigator.vibrate([60,40,60,40,120]);
+    if(!data._recorded){data._recorded=true;recordDone();}}}
+// 検品完了→検品済ログへ自動記録（次回同じ伝票QRを読むと「検品済み」表示になる）
+async function recordDone(){
+  const p={done:'1'+data.取引NO, toku:data.得意先||''}; if(ACCESS_PIN)p.pin=ACCESS_PIN;
+  const j=await jsonp(p);
+  if(j.ok){
+    if(!dnLog)dnLog={};
+    dnLog[data.取引NO]=j.検品日時;
+    $("done").innerHTML='✅ 検品完了（全て一致）<div style="font-size:14px;margin-top:6px;font-weight:normal;">📝 検品済みを記録しました（'+j.検品日時+'）</div>';
+  }else{
+    data._recorded=false;   // 通信失敗→次の完了判定で再試行
+    $("done").innerHTML='✅ 検品完了（全て一致）<div style="font-size:13px;margin-top:6px;font-weight:normal;">⚠ 記録失敗（電波を確認。もう一度最後の商品を読むと再記録）</div>';
+  }
+}
 
 /* ===== 在庫検索 ===== */
 async function lookupStock(code){
@@ -509,7 +588,8 @@ $("manualIn").addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefaul
 $("btnNext").onclick=()=>{$("card").style.display="none";$("btnNext").style.display="none";$("stockErr").style.display="none";$("loading").style.display="none";
   $("scan").style.display="block";$("msg").textContent="商品のバーコードを読み取ってください";lastCode="";startScan();};
 $("btnReset").onclick=()=>{data=null;scanned={};mode="denpyo";lastCode="";document.body.className="kenpinmode qrmode";
-  $("info").textContent="伝票QRを読み取ってください";$("tb").innerHTML="";$("done").style.display="none";$("msg").textContent="";setManualHint();};
+  $("info").textContent="伝票QRを読み取ってください";$("tb").innerHTML="";$("done").style.display="none";$("msg").textContent="";
+  setManualHint();preloadDenpyo();};
 </script>
 </body>
 </html>
