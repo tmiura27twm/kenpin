@@ -88,7 +88,6 @@
     <button class="b-stop" id="btnStop">⏸ 停止</button>
     <button class="b-reset" id="btnReset" style="display:none;">🔄 別伝票</button>
   </div>
-  <div id="zoomrow" style="display:none;padding:2px 14px 8px;">🔍 ズーム <input type="range" id="zoom" style="width:calc(100% - 70px);vertical-align:middle;"></div>
   <div id="manualrow" style="display:flex;gap:6px;padding:4px 14px 6px;">
     <input id="manualIn" inputmode="numeric" autocomplete="off" placeholder="読み取れない時は 1498… の番号を入力" style="flex:1;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:15px;">
     <button id="btnManual" style="padding:10px 16px;border:0;border-radius:8px;background:#455a64;color:#fff;font-weight:bold;">照会</button>
@@ -167,7 +166,7 @@ function hideLoad(){$("loading").style.display="none";}
 /* ===== 伝票一覧の先読み（照会を一瞬にする）=====
    検品を開いた時点で伝票一覧＋検品済ログをスプシから直読みしておき、QR読取時はスマホ内で即照会。
    読み込み前や見つからない時は従来のApps Script照会に自動フォールバック。 */
-let dnRows=null, dnIdx=null, dnLog=null, dnLoadedAt=0;
+let dnRows=null, dnIdx=null, dnLog=null, dnMik=null, dnLoadedAt=0;
 function gvCell(row,i){const c=row.c[i];return c?(c.f!=null?c.f:(c.v!=null?String(c.v):"")):"";}
 function gvNum(row,i){const c=row.c[i];return (c&&c.v!=null)?Number(c.v):0;}
 function preloadDenpyo(force){
@@ -177,7 +176,21 @@ function preloadDenpyo(force){
   const load=src=>{const s=document.createElement("script");s.src=src;s.onerror=()=>{};document.body.appendChild(s);};
   load(base+"?sheet="+encodeURIComponent("伝票一覧")+"&tqx=responseHandler:onDnBody");
   load(base+"?sheet="+encodeURIComponent("検品済ログ")+"&tqx=responseHandler:onDnLog");
+  load(base+"?sheet="+encodeURIComponent("未検品一覧")+"&tqx=responseHandler:onDnMik");
 }
+// 未検品一覧（A列=取引NO）。ここに載っている＝まだ検品していない。載っていない＝ハンディーで検品済み。
+window.onDnMik=function(resp){
+  try{
+    dnMik={};
+    if(resp.status!=="ok")return;
+    const rows=resp.table.rows;
+    for(let i=0;i<rows.length;i++){
+      const no=String(gvCell(rows[i],0)).replace(/[^0-9]/g,"");
+      if(no&&no!=="") dnMik[no]=true;
+    }
+    // ヘッダー行'取引NO'は数字化されず除外される
+  }catch(e){ dnMik=null; }
+};
 window.onDnBody=function(resp){
   try{
     if(resp.status!=="ok")return;
@@ -267,9 +280,15 @@ async function loadDenpyo(qr){
     setManualHint();lastCode="";startScan();return;
   }
   data=j;scanned={};mode="item";document.body.className="kenpinmode";   // 商品スキャンは横長カメラ
-  const st=j.検品済
-    ?'<span style="background:#2e7d32;color:#fff;border-radius:6px;padding:2px 8px;font-size:13px;white-space:nowrap;">✅ 検品済み '+j.検品済+'</span>'
-    :'<span style="background:#ef6c00;color:#fff;border-radius:6px;padding:2px 8px;font-size:13px;">未検品</span>';
+  const green=t=>'<span style="background:#2e7d32;color:#fff;border-radius:6px;padding:2px 8px;font-size:13px;white-space:nowrap;">'+t+'</span>';
+  let st;
+  if(j.検品済){                                    // このアプリで検品完了記録あり
+    st=green('✅ 検品済み '+j.検品済);
+  }else if(dnMik && !dnMik[j.取引NO]){             // 未検品一覧に載っていない＝ハンディーで検品済み
+    st=green('✅ 検品済み（ハンディー）');
+  }else{                                           // 未検品一覧に載っている（またはリスト未取得）＝未検品
+    st='<span style="background:#ef6c00;color:#fff;border-radius:6px;padding:2px 8px;font-size:13px;">未検品</span>';
+  }
   $("info").innerHTML='伝票 <b>'+j.取引NO+'</b>　'+(j.得意先||"")+'　'+fmtDay(j.取引日)+'　'+st;
   $("done").innerHTML='✅ 検品完了（全て一致）';
   renderItems();$("msg").innerHTML='商品のバーコードを順に読み取ってください';
@@ -359,7 +378,7 @@ async function startScan(){
       video=document.createElement('video');video.setAttribute('playsinline','true');video.muted=true;
       video.srcObject=stream;await video.play();
       const r=$("reader");r.innerHTML='';r.appendChild(video);video.style.width='100%';
-      setupZoom();scanLoop();return;
+      scanLoop();return;
     }catch(e){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}}
   }
   startZxing();   // iPhone(Safari)等 BarcodeDetector非対応 → ZXingで反転対応読取
@@ -453,7 +472,6 @@ async function startZxing(){
   const r=$("reader");r.innerHTML='';r.appendChild(video);video.style.width='100%';   // DOM追加→再生（iOS対策）
   try{ await video.play(); }catch(e){}
   video._logged=false;
-  setupZoom();
   scanLoopZ();
 }
 function zxDec(canvas,hints){
@@ -558,16 +576,8 @@ async function scanLoopZ(){
 }
 function stopScan(){
   if(rafTimer){clearTimeout(rafTimer);rafTimer=null;}
-  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;track=null;torchOn=false;$("reader").innerHTML='';$("zoomrow").style.display='none';}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;track=null;torchOn=false;$("reader").innerHTML='';}
   if(scanner){scanner.stop().then(()=>{scanner.clear();scanner=null;}).catch(()=>{scanner=null;});}
-}
-function setupZoom(){
-  const row=$("zoomrow"),z=$("zoom");
-  try{const caps=track.getCapabilities?track.getCapabilities():{};
-    if(caps.zoom&&caps.zoom.max>caps.zoom.min){z.min=caps.zoom.min;z.max=caps.zoom.max;z.step=caps.zoom.step||0.1;z.value=caps.zoom.min;
-      row.style.display='block';z.oninput=()=>{track.applyConstraints({advanced:[{zoom:Number(z.value)}]}).catch(()=>{});};return;}
-  }catch(e){}
-  row.style.display='none';
 }
 async function toggleTorch(){
   if(!track){$("msg").innerHTML='<span class="ng">先に「開始」を押してください</span>';return;}
