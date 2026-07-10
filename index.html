@@ -111,7 +111,7 @@
   <div class="card" id="card">
     <div class="hd"><span class="tot" id="tot"></span><div class="nm" id="nm"></div>
       <div class="sub">棚番 <span class="tana" id="stana"></span>　商品CD <span id="scd"></span></div>
-      <div class="sub"><span style="background:#eceff1;border-radius:5px;padding:2px 8px;margin-right:6px;">適正 <b id="stekisei"></b></span><span style="background:#eceff1;border-radius:5px;padding:2px 8px;">発注 <b id="shatchu"></b></span></div>
+      <div class="sub"><span style="background:#eceff1;border-radius:5px;padding:2px 8px;margin-right:6px;">適正 <b id="stekisei"></b></span><span style="background:#eceff1;border-radius:5px;padding:2px 8px;margin-right:6px;">発注 <b id="shatchu"></b></span><span style="background:#e3f2fd;border-radius:5px;padding:2px 8px;">先月 <b id="sgetu"></b></span></div>
       <div class="sub" id="sbiko" style="color:#bf6a00;"></div>
       <div class="sub" id="updated" style="color:#888;font-size:12px;"></div></div>
     <table><thead><tr><th>ロット</th><th class="r">在庫</th><th>使用期限</th><th>入荷日</th><th>備考</th></tr></thead><tbody id="lots"></tbody></table>
@@ -251,7 +251,7 @@ function openStock(){app="stock";data=null;lastCode="";document.body.className="
   $("title").textContent="🔍 在庫検索";$("btnHome").style.display="inline-block";$("btnReset").style.display="none";
   $("home").style.display="none";$("scan").style.display="block";$("kenpinResult").style.display="none";$("stockResult").style.display="block";
   $("card").style.display="none";$("btnNext").style.display="none";$("loading").style.display="none";$("stockErr").style.display="none";$("msg").textContent="商品のバーコードを読み取ってください";
-  setManualHint();startScan();}
+  setManualHint();preloadStock();startScan();}
 function openShukko(){stopScan();window.open(SHUKKO_URL,'_blank')||(location.href=SHUKKO_URL);}
 function goHome(){stopScan();app="home";lastCode="";document.body.className="";
   $("title").textContent="📋 メニュー";$("btnHome").style.display="none";$("loading").style.display="none";
@@ -342,24 +342,95 @@ async function recordDone(){
 }
 
 /* ===== 在庫検索 ===== */
+/* 先読み（在庫検索＋商品索引タブをデータスプシから直読み）→ スキャン時はスマホ内で即照会。
+   未ロード時・失敗時は従来のApps Script照会に自動フォールバック。 */
+let stRows=null, stIdx=null, stLoadedAt=0, stFetchedAt="";
+function preloadStock(force){
+  const now=Date.now();
+  if(!force && stRows && now-stLoadedAt<5*60*1000) return;   // 5分以内なら再利用
+  const go=id=>{
+    const base="https://docs.google.com/spreadsheets/d/"+id+"/gviz/tq";
+    const load=src=>{const s=document.createElement("script");s.src=src;s.onerror=()=>{};document.body.appendChild(s);};
+    load(base+"?sheet="+encodeURIComponent("在庫検索")+"&tqx=responseHandler:onStBody");
+    load(base+"?sheet="+encodeURIComponent("商品索引")+"&tqx=responseHandler:onStIdx");
+  };
+  const cached=localStorage.getItem("dataSsId");
+  if(cached){ go(cached); return; }
+  jsonp({}).then(j=>{ if(j&&j.dataSsId){ localStorage.setItem("dataSsId",j.dataSsId); go(j.dataSsId); } });
+}
+window.onStBody=function(resp){
+  try{
+    if(resp.status!=="ok")return;
+    const rows=resp.table.rows;
+    if(!rows.length || gvCell(rows[0],5)!=="ロット")return;   // タブ違い（未共有等）は不採用→GAS照会のまま
+    stRows=rows; stLoadedAt=Date.now();
+    const n=new Date(); stFetchedAt=('0'+n.getHours()).slice(-2)+':'+('0'+n.getMinutes()).slice(-2);
+  }catch(e){}
+};
+window.onStIdx=function(resp){
+  try{
+    if(resp.status!=="ok")return;
+    const rows=resp.table.rows;
+    if(!rows.length || gvCell(rows[0],1)!=="商品名")return;
+    stIdx=rows;
+  }catch(e){}
+};
+function stockLocalLookup(code){
+  if(!stRows)return null;
+  const raw=normBC(code), gtin=extractGTIN(code)||"", cc=core12(code);
+  const match=(j,g)=>{const jj=normBC(j),gg=normBC(g);
+    return (gtin&&gtin===gg)||(raw&&(raw===jj||raw===gg))||(cc&&(cc===core12(j)||cc===core12(g)));};
+  let name="",tana="",cd="",tek="-",hat="-",biko="",getu="-",lots={},order=[],total=0,found=false;
+  for(let i=1;i<stRows.length;i++){
+    const r=stRows[i];
+    if(!match(gvCell(r,3),gvCell(r,4)))continue;
+    found=true; cd=cd||gvCell(r,0); name=gvCell(r,1); tana=gvCell(r,2);
+    tek=String(gvNum(r,8)); hat=String(gvNum(r,9)); biko=gvCell(r,10); getu=String(gvNum(r,13));
+    const lot=gvCell(r,5)||"(ロット無)", qty=gvNum(r,6);
+    if(!lots[lot]){lots[lot]={lot:lot,qty:0,exp:gvCell(r,7),biko:gvCell(r,11),indate:gvCell(r,12)};order.push(lot);}
+    lots[lot].qty+=qty; total+=qty;
+  }
+  if(!found){
+    if(!stIdx)return null;                       // 索引未ロード→サーバー照会へ
+    for(let i=1;i<stIdx.length;i++){
+      const r=stIdx[i];
+      if(!match(gvCell(r,3),gvCell(r,4)))continue;
+      return {ok:true,商品CD:gvCell(r,0),商品名:gvCell(r,1),棚番:gvCell(r,2),在庫数:0,lots:[],
+        適正数:String(gvNum(r,5)),発注数:String(gvNum(r,6)),備考:gvCell(r,7),先月出庫:String(gvNum(r,8)),updatedAt:""};
+    }
+    return {ok:false,error:"該当商品なし",code:(gtin||raw)};
+  }
+  const arr=order.map(k=>lots[k]).sort((a,b)=>String(a.exp)<String(b.exp)?-1:String(a.exp)>String(b.exp)?1:(a.lot<b.lot?-1:1));
+  return {ok:true,商品CD:cd,商品名:name,棚番:tana,在庫数:total,lots:arr,
+          適正数:tek,発注数:hat,備考:biko,先月出庫:getu,updatedAt:""};
+}
 async function lookupStock(code){
-  // 読取→即カメラOFF→「照会中...」（待って感）。在庫検索は音・フラッシュ・バイブなし
-  stopScan();showLoad();
+  stopScan();
   $("card").style.display="none";$("stockErr").style.display="none";$("btnNext").style.display="none";
-  const p={stock:code}; if(ACCESS_PIN)p.pin=ACCESS_PIN;
-  const j=await jsonp(p);
-  hideLoad();$("stockResult").style.display="block";
+  let j=stockLocalLookup(code);                  // 先読み済みなら一瞬で表示
+  if(!j){
+    showLoad();                                   // 未ロード時のみ従来のサーバー照会（照会中表示）
+    const p={stock:code}; if(ACCESS_PIN)p.pin=ACCESS_PIN;
+    j=await jsonp(p);
+    hideLoad();
+  }
+  renderStock(j);
+}
+function renderStock(j){
+  $("stockResult").style.display="block";
   if(!j.ok){
     $("stockErr").textContent='⚠ '+(j.error||'該当なし');$("stockErr").style.display="block";$("btnNext").style.display="block";return;
   }
-  $("nm").textContent=j.商品名;$("stana").textContent=j.棚番||'-';$("scd").textContent=j.商品CD;
+  $("nm").textContent=j.商品名;$("stana").textContent=j.棚番||'-';$("scd").textContent=j.商品CD||'-';
   $("tot").textContent=j.在庫数+' 個';$("tot").style.color=(j.在庫数>0?'#00695c':'#c62828');
-  $("stekisei").textContent=(j.適正数!=null?j.適正数:'-');$("shatchu").textContent=(j.発注数!=null?j.発注数:'-');
+  $("stekisei").textContent=(j.適正数!=null&&j.適正数!==''?j.適正数:'-');
+  $("shatchu").textContent=(j.発注数!=null&&j.発注数!==''?j.発注数:'-');
+  $("sgetu").textContent=(j.先月出庫!=null&&j.先月出庫!==''?j.先月出庫:'-');
   $("sbiko").textContent=j.備考?('備考: '+j.備考):'';
   $("lots").innerHTML=(j.lots&&j.lots.length)
     ?j.lots.map(l=>'<tr><td>'+l.lot+'</td><td class="r"><b>'+l.qty+'</b></td><td>'+fmtExp(l.exp)+'</td><td>'+fmtDay(l.indate)+'</td><td style="color:#bf6a00;font-size:13px;">'+(l.biko||'')+'</td></tr>').join('')
     :'<tr><td colspan="5" style="text-align:center;color:#c62828;font-weight:bold;">在庫なし</td></tr>';
-  $("updated").textContent=j.updatedAt?('在庫 '+j.updatedAt.slice(5)+' 時点'):'';
+  $("updated").textContent=j.updatedAt?('在庫 '+j.updatedAt.slice(5)+' 時点'):(stFetchedAt?('在庫 '+stFetchedAt+' 取得'):'');
   $("card").style.display='block';$("btnNext").style.display='block';}
 
 /* ===== スキャンエンジン（BarcodeDetector優先・反転対応・ズーム/ライト）===== */
@@ -597,7 +668,7 @@ function manualGo(){const v=$("manualIn").value.trim();if(!v)return;$("manualIn"
 $("btnManual").onclick=manualGo;
 $("manualIn").addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();manualGo();}});
 $("btnNext").onclick=()=>{$("card").style.display="none";$("btnNext").style.display="none";$("stockErr").style.display="none";$("loading").style.display="none";
-  $("scan").style.display="block";$("msg").textContent="商品のバーコードを読み取ってください";lastCode="";startScan();};
+  $("scan").style.display="block";$("msg").textContent="商品のバーコードを読み取ってください";lastCode="";preloadStock();startScan();};
 $("btnReset").onclick=()=>{data=null;scanned={};mode="denpyo";lastCode="";document.body.className="kenpinmode qrmode";
   $("info").textContent="伝票QRを読み取ってください";$("tb").innerHTML="";$("done").style.display="none";$("msg").textContent="";
   setManualHint();preloadDenpyo();};
