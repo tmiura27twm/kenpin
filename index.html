@@ -114,7 +114,7 @@
       <div class="sub"><span style="background:#eceff1;border-radius:5px;padding:2px 8px;margin-right:6px;">適正 <b id="stekisei"></b></span><span style="background:#eceff1;border-radius:5px;padding:2px 8px;">発注 <b id="shatchu"></b></span></div>
       <div class="sub" id="sbiko" style="color:#bf6a00;"></div>
       <div class="sub" id="updated" style="color:#888;font-size:12px;"></div></div>
-    <table><thead><tr><th>ロット</th><th class="r">在庫</th><th>使用期限</th><th>備考</th></tr></thead><tbody id="lots"></tbody></table>
+    <table><thead><tr><th>ロット</th><th class="r">在庫</th><th>使用期限</th><th>入荷日</th><th>備考</th></tr></thead><tbody id="lots"></tbody></table>
   </div>
 </div>
 <!-- 照会中（検品・在庫検索 共通）-->
@@ -357,8 +357,8 @@ async function lookupStock(code){
   $("stekisei").textContent=(j.適正数!=null?j.適正数:'-');$("shatchu").textContent=(j.発注数!=null?j.発注数:'-');
   $("sbiko").textContent=j.備考?('備考: '+j.備考):'';
   $("lots").innerHTML=(j.lots&&j.lots.length)
-    ?j.lots.map(l=>'<tr><td>'+l.lot+'</td><td class="r"><b>'+l.qty+'</b></td><td>'+fmtExp(l.exp)+'</td><td style="color:#bf6a00;font-size:13px;">'+(l.biko||'')+'</td></tr>').join('')
-    :'<tr><td colspan="4" style="text-align:center;color:#c62828;font-weight:bold;">在庫なし</td></tr>';
+    ?j.lots.map(l=>'<tr><td>'+l.lot+'</td><td class="r"><b>'+l.qty+'</b></td><td>'+fmtExp(l.exp)+'</td><td>'+fmtDay(l.indate)+'</td><td style="color:#bf6a00;font-size:13px;">'+(l.biko||'')+'</td></tr>').join('')
+    :'<tr><td colspan="5" style="text-align:center;color:#c62828;font-weight:bold;">在庫なし</td></tr>';
   $("updated").textContent=j.updatedAt?('在庫 '+j.updatedAt.slice(5)+' 時点'):'';
   $("card").style.display='block';$("btnNext").style.display='block';}
 
