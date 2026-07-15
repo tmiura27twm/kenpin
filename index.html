@@ -380,12 +380,12 @@ function stockLocalLookup(code){
   const raw=normBC(code), gtin=extractGTIN(code)||"", cc=core12(code);
   const match=(j,g)=>{const jj=normBC(j),gg=normBC(g);
     return (gtin&&gtin===gg)||(raw&&(raw===jj||raw===gg))||(cc&&(cc===core12(j)||cc===core12(g)));};
-  let name="",tana="",cd="",tek="-",hat="-",biko="",getu="-",lots={},order=[],total=0,found=false;
+  let name="",tana="",cd="",tek="-",hat="-",biko="",getu="-",hoso="",lots={},order=[],total=0,found=false;
   for(let i=1;i<stRows.length;i++){
     const r=stRows[i];
     if(!match(gvCell(r,3),gvCell(r,4)))continue;
     found=true; cd=cd||gvCell(r,0); name=gvCell(r,1); tana=gvCell(r,2);
-    tek=String(gvNum(r,8)); hat=String(gvNum(r,9)); biko=gvCell(r,10); getu=String(gvNum(r,13));
+    tek=String(gvNum(r,8)); hat=String(gvNum(r,9)); biko=gvCell(r,10); getu=String(gvNum(r,13)); hoso=gvCell(r,14);
     const lot=gvCell(r,5)||"(ロット無)", qty=gvNum(r,6);
     if(!lots[lot]){lots[lot]={lot:lot,qty:0,exp:gvCell(r,7),biko:gvCell(r,11),indate:gvCell(r,12)};order.push(lot);}
     lots[lot].qty+=qty; total+=qty;
@@ -395,13 +395,13 @@ function stockLocalLookup(code){
     for(let i=1;i<stIdx.length;i++){
       const r=stIdx[i];
       if(!match(gvCell(r,3),gvCell(r,4)))continue;
-      return {ok:true,商品CD:gvCell(r,0),商品名:gvCell(r,1),棚番:gvCell(r,2),在庫数:0,lots:[],
+      return {ok:true,商品CD:gvCell(r,0),商品名:gvCell(r,1),包装:gvCell(r,9),棚番:gvCell(r,2),在庫数:0,lots:[],
         適正数:String(gvNum(r,5)),発注数:String(gvNum(r,6)),備考:gvCell(r,7),先月出庫:String(gvNum(r,8)),updatedAt:""};
     }
     return {ok:false,error:"該当商品なし",code:(gtin||raw)};
   }
   const arr=order.map(k=>lots[k]).sort((a,b)=>String(a.exp)<String(b.exp)?-1:String(a.exp)>String(b.exp)?1:(a.lot<b.lot?-1:1));
-  return {ok:true,商品CD:cd,商品名:name,棚番:tana,在庫数:total,lots:arr,
+  return {ok:true,商品CD:cd,商品名:name,包装:hoso,棚番:tana,在庫数:total,lots:arr,
           適正数:tek,発注数:hat,備考:biko,先月出庫:getu,updatedAt:""};
 }
 async function lookupStock(code){
@@ -421,7 +421,7 @@ function renderStock(j){
   if(!j.ok){
     $("stockErr").textContent='⚠ '+(j.error||'該当なし');$("stockErr").style.display="block";$("btnNext").style.display="block";return;
   }
-  $("nm").textContent=j.商品名;$("stana").textContent=j.棚番||'-';$("scd").textContent=j.商品CD||'-';
+  $("nm").textContent=j.商品名+(j.包装?' / '+j.包装:'');$("stana").textContent=j.棚番||'-';$("scd").textContent=j.商品CD||'-';
   $("tot").textContent=j.在庫数+' 個';$("tot").style.color=(j.在庫数>0?'#00695c':'#c62828');
   $("stekisei").textContent=(j.適正数!=null&&j.適正数!==''?j.適正数:'-');
   $("shatchu").textContent=(j.発注数!=null&&j.発注数!==''?j.発注数:'-');
@@ -472,7 +472,9 @@ async function scanLoop(){
       try{codes=annotateCenter((await detector.detect(cvs))||[],sw,sh);}catch(e){}
     }
   }
-  if(!codes.length && window.zxingReadBarcodes){   // 標準エンジンが読めなかった時だけWASM＋ズームで再挑戦（緑地/黒地の反転対応）
+  scanLoop._n=(scanLoop._n||0)+1;
+  if(!codes.length && window.zxingReadBarcodes && scanLoop._n%3===0){
+    // 標準エンジンで読めない時のWASM＋ズーム再挑戦（緑地/黒地の反転対応）。3フレームに1回に間引き＝通常の認識を速く保つ
     const isDenpyo=(app==="kenpin"&&mode==="denpyo");
     const r=await wasmDecode(isDenpyo, !isDenpyo);
     if(r && (isDenpyo===r.isQR)){ onScan(r.text, r.isQR?'qr':'bar'); rafTimer=setTimeout(scanLoop,60); return; }
@@ -659,6 +661,8 @@ async function toggleTorch(){
 }
 // アプリ化（Service Worker登録）
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
+// 起動直後から在庫データを先読み（在庫検索を開く前に準備完了→最初のスキャンから即表示）
+preloadStock();
 
 $("btnScan").onclick=startScan;
 $("btnTorch").onclick=toggleTorch;
