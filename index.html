@@ -26,9 +26,9 @@
   header{background:#37474f;color:#fff;padding:10px 14px;font-size:18px;font-weight:bold;position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;}
   #btnHome{display:none;background:#546e7a;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:14px;font-weight:bold;}
   /* メニュー */
-  #home{padding:24px 16px;}
-  .menu-btn{display:block;width:100%;margin:0 0 16px;padding:26px;border:0;border-radius:14px;color:#fff;font-size:24px;font-weight:bold;box-shadow:0 2px 6px rgba(0,0,0,.15);}
-  .menu-btn small{display:block;margin-top:6px;font-size:14px;font-weight:normal;opacity:.9;}
+  #home{padding:16px 16px;}
+  .menu-btn{display:block;width:100%;margin:0 0 12px;padding:17px;border:0;border-radius:14px;color:#fff;font-size:21px;font-weight:bold;box-shadow:0 2px 6px rgba(0,0,0,.15);}
+  .menu-btn small{display:block;margin-top:4px;font-size:13px;font-weight:normal;opacity:.9;}
   .menu-btn.kenpin{background:#1565c0;}
   .menu-btn.stock{background:#00695c;}
   .menu-btn.tana{background:#6a1b9a;}
@@ -194,9 +194,9 @@ function preloadDenpyo(force){
   if(!force && dnRows && now-dnLoadedAt<5*60*1000) return;   // 5分以内なら再利用
   const base="https://docs.google.com/spreadsheets/d/"+OUT_SS+"/gviz/tq";
   const load=src=>{const s=document.createElement("script");s.src=src;s.onerror=()=>{};document.body.appendChild(s);};
-  load(base+"?sheet="+encodeURIComponent("伝票一覧")+"&tqx=responseHandler:onDnBody");
-  load(base+"?sheet="+encodeURIComponent("検品済ログ")+"&tqx=responseHandler:onDnLog");
-  load(base+"?sheet="+encodeURIComponent("未検品一覧")+"&tqx=responseHandler:onDnMik");
+  load(base+"?headers=0&sheet="+encodeURIComponent("伝票一覧")+"&tqx=responseHandler:onDnBody");
+  load(base+"?headers=0&sheet="+encodeURIComponent("検品済ログ")+"&tqx=responseHandler:onDnLog");
+  load(base+"?headers=0&sheet="+encodeURIComponent("未検品一覧")+"&tqx=responseHandler:onDnMik");
 }
 // 未検品一覧（A列=取引NO）。ここに載っている＝まだ検品していない。載っていない＝ハンディーで検品済み。
 window.onDnMik=function(resp){
@@ -226,9 +226,9 @@ window.onDnLog=function(resp){
     dnLog={};
     if(resp.status!=="ok")return;
     const rows=resp.table.rows;
-    // 検品済ログタブが未作成だと別タブが返るためヘッダー検証（A1=取引NO のときだけ採用）
-    if(!rows.length || gvCell(rows[0],0)!=="取引NO"){ if(rows.length&&/^\d+$/.test(gvCell(rows[0],0))){/*ヘッダーが数値列で落ちた場合は列構成で判断*/}else return; }
-    for(let i=0;i<rows.length;i++){
+    // タブ未作成だと別タブが返るためヘッダー検証（B1=得意先。A列は数値列でヘッダーが落ちるためB列で判定）
+    if(!rows.length || gvCell(rows[0],1)!=="得意先")return;
+    for(let i=1;i<rows.length;i++){
       const no=String(gvCell(rows[i],0)).replace(/[^0-9]/g,"");
       if(no) dnLog[no]=gvCell(rows[i],2);   // 最終行が最新
     }
@@ -370,8 +370,8 @@ function preloadStock(force){
   const go=id=>{
     const base="https://docs.google.com/spreadsheets/d/"+id+"/gviz/tq";
     const load=src=>{const s=document.createElement("script");s.src=src;s.onerror=()=>{};document.body.appendChild(s);};
-    load(base+"?sheet="+encodeURIComponent("在庫検索")+"&tqx=responseHandler:onStBody");
-    load(base+"?sheet="+encodeURIComponent("商品索引")+"&tqx=responseHandler:onStIdx");
+    load(base+"?headers=0&sheet="+encodeURIComponent("在庫検索")+"&tqx=responseHandler:onStBody");
+    load(base+"?headers=0&sheet="+encodeURIComponent("商品索引")+"&tqx=responseHandler:onStIdx");
   };
   const cached=localStorage.getItem("dataSsId");
   if(cached){ go(cached); return; }
