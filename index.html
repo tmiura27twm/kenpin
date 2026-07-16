@@ -33,10 +33,12 @@
   .menu-btn.stock{background:#00695c;}
   .menu-btn.tana{background:#6a1b9a;}
   .menu-btn.shukko{background:#ef6c00;}
-  /* 配列検索（棚番→商品一覧） */
-  .chips{display:flex;gap:8px;overflow-x:auto;padding:8px 14px;-webkit-overflow-scrolling:touch;}
-  .chips button{flex:0 0 auto;padding:9px 16px;border-radius:20px;border:1px solid #b0bec5;background:#fff;font-size:15px;font-weight:bold;color:#455a64;white-space:nowrap;}
-  .chips button.on{background:#6a1b9a;border-color:#6a1b9a;color:#fff;}
+  /* 配列検索（棚番→商品一覧）：画面全体の大ボタンで選ぶ */
+  .tgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 14px;}
+  .tgrid.nums{grid-template-columns:repeat(3,1fr);}
+  .tgrid button{padding:18px 6px;border:0;border-radius:12px;background:#6a1b9a;color:#fff;font-size:19px;font-weight:bold;box-shadow:0 2px 5px rgba(0,0,0,.15);}
+  .tgrid button small{display:block;margin-top:4px;font-size:11px;font-weight:normal;opacity:.85;}
+  .tback{display:block;width:calc(100% - 28px);margin:10px 14px 0;padding:12px;background:#ede7f6;color:#4a148c;border:0;border-radius:10px;font-weight:bold;font-size:15px;text-align:left;}
   .titem{background:#fff;border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.08);padding:10px 12px;margin:0 14px 8px;display:flex;align-items:center;gap:10px;}
   .titem .nm2{flex:1;font-size:14px;font-weight:bold;line-height:1.35;}
   .titem .q2{font-size:20px;font-weight:bold;color:#00695c;white-space:nowrap;min-width:44px;text-align:right;}
@@ -87,7 +89,7 @@
 <div id="home">
   <button class="menu-btn kenpin" onclick="openKenpin()">📦 検品<small>伝票QR → 商品を照合</small></button>
   <button class="menu-btn stock" onclick="openStock()">🔍 在庫検索<small>商品バーコード → 在庫確認</small></button>
-  <button class="menu-btn tana" onclick="openTana()">🗄 配列検索<small>棚番 → 商品一覧</small></button>
+  <button class="menu-btn tana" onclick="openTana()">🗂 配列検索<small>棚番 → 商品一覧</small></button>
   <button class="menu-btn shukko" onclick="openShukko()">🚚 出庫リスト<small>配送ルート別のピッキング</small></button>
 </div>
 
@@ -130,9 +132,10 @@
 </div>
 <!-- 配列検索（棚番→商品一覧） -->
 <div id="tanaView" style="display:none;">
-  <div id="tanaP" class="chips"></div>
-  <div id="tanaN" class="chips"></div>
-  <div id="tanaSum" style="padding:2px 14px 8px;font-weight:bold;color:#455a64;font-size:14px;"></div>
+  <button id="tanaBack" class="tback" style="display:none;">← 戻る</button>
+  <div id="tanaGroups" class="tgrid"></div>
+  <div id="tanaNums" class="tgrid nums" style="display:none;"></div>
+  <div id="tanaSum" style="padding:8px 14px;font-weight:bold;color:#455a64;font-size:14px;"></div>
   <div id="tanaList"></div>
 </div>
 
@@ -424,50 +427,70 @@ function stockLocalLookup(code){
           適正数:tek,発注数:hat,備考:biko,先月出庫:getu,updatedAt:""};
 }
 /* ===== 配列検索（棚番→商品一覧）。先読み済みの商品索引＋在庫検索だけで動く（通信なし） ===== */
-let tanaSelP=null, tanaSelN=null, tanaMap=null;
+let tanaSelP=null, tanaMap=null;
 function tnorm(t){ return String(t||"").trim().normalize('NFKC'); }   // 全角数字の棚番（東１等）も統一
 function tanaParse(t){ const m=tnorm(t).match(/^(.*?)(\d+)$/);
   if(m&&m[1])return[m[1],Number(m[2])]; return[tnorm(t),null]; }
+function escT(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function yenS(a){ return a>=10000 ? Math.round(a/10000).toLocaleString('ja-JP')+'万円'
+                                  : Math.round(a).toLocaleString('ja-JP')+'円'; }
 function openTana(){
   stopScan();app="tana";document.body.className="";
-  $("title").textContent="🗄 配列検索";$("btnHome").style.display="inline-block";$("btnReset").style.display="none";
+  $("title").textContent="🗂 配列検索";$("btnHome").style.display="inline-block";$("btnReset").style.display="none";
   $("home").style.display="none";$("scan").style.display="none";$("kenpinResult").style.display="none";
   $("stockResult").style.display="none";$("loading").style.display="none";$("tanaView").style.display="block";
-  $("msg").textContent="";tanaSelP=null;tanaSelN=null;
+  $("msg").textContent="";tanaSelP=null;tanaMap=null;
   preloadStock();buildTana();
 }
 function buildTana(){
-  if(!stIdx){
-    $("tanaP").innerHTML='<div style="padding:6px 0;color:#777;">データ読み込み中...</div>';
-    $("tanaN").innerHTML="";$("tanaList").innerHTML="";$("tanaSum").textContent="";
+  if(!stIdx||!stRows){
+    $("tanaGroups").style.display="grid";
+    $("tanaGroups").innerHTML='<div style="grid-column:1/-1;padding:16px 0;color:#777;text-align:center;">データ読み込み中...</div>';
+    $("tanaNums").style.display="none";$("tanaBack").style.display="none";
+    $("tanaList").innerHTML="";$("tanaSum").textContent="";
     setTimeout(()=>{ if(app==="tana"&&!tanaMap) buildTana(); },700);
     return;
   }
-  tanaMap={};                                   // 棚グループ名 → 番号の集合（番号なし棚は -1）
-  const add=t=>{ if(!t)return; const[p,n]=tanaParse(t);
-    if(!tanaMap[p])tanaMap[p]=new Set(); tanaMap[p].add(n!=null?n:-1); };
-  for(let i=1;i<stIdx.length;i++) add(tnorm(gvCell(stIdx[i],2)));
-  if(stRows)for(let i=1;i<stRows.length;i++) add(tnorm(gvCell(stRows[i],2)));
-  const ps=Object.keys(tanaMap).sort((a,b)=>a.localeCompare(b,'ja'));
-  const el=$("tanaP");el.innerHTML="";
-  ps.forEach(p=>{ const b=document.createElement("button");b.textContent=p;
-    b.onclick=()=>{ tanaSelP=p;tanaSelN=null;renderTanaNums(); };
-    el.appendChild(b); });
-  renderTanaNums();
+  // 棚グループ（メーカー名等）→ 番号ごとの品目数・在庫金額を集計
+  tanaMap={};
+  const slot=t=>{ const[p,n]=tanaParse(t), k=(n!=null?n:-1);
+    if(!tanaMap[p])tanaMap[p]={nums:{},amt:0,cnt:0};
+    if(!tanaMap[p].nums[k])tanaMap[p].nums[k]={amt:0,cnt:0};
+    return [tanaMap[p], tanaMap[p].nums[k]]; };
+  for(let i=1;i<stIdx.length;i++){ const t=tnorm(gvCell(stIdx[i],2)); if(!t)continue;
+    const[g,s]=slot(t); g.cnt++; s.cnt++; }
+  for(let i=1;i<stRows.length;i++){ const t=tnorm(gvCell(stRows[i],2)); if(!t)continue;
+    const[g,s]=slot(t); const a=gvNum(stRows[i],15); g.amt+=a; s.amt+=a; }
+  renderTanaGroups();
 }
-function renderTanaNums(){
-  Array.from($("tanaP").children).forEach(b=>{ if(b.tagName==='BUTTON') b.className=(b.textContent===tanaSelP)?"on":""; });
-  const el=$("tanaN");el.innerHTML="";$("tanaList").innerHTML="";$("tanaSum").textContent="";
-  if(!tanaSelP||!tanaMap)return;
-  const nums=Array.from(tanaMap[tanaSelP]).sort((a,b)=>a-b).filter(n=>n!==-1);
-  if(!nums.length){ renderTanaList(tanaSelP); return; }        // 番号なし棚（例：追補のみ等）は即一覧
-  nums.forEach(n=>{ const b=document.createElement("button");b.textContent=n;
-    b.className=(tanaSelN===n)?"on":"";
-    b.onclick=()=>{ tanaSelN=n;renderTanaNums(); };
+function renderTanaGroups(){                                   // 1画面目：メーカー名等（在庫金額の多い順）
+  tanaSelP=null;
+  $("tanaBack").style.display="none";$("tanaNums").style.display="none";
+  $("tanaList").innerHTML="";$("tanaSum").textContent="";
+  const el=$("tanaGroups");el.style.display="grid";el.innerHTML="";
+  const ps=Object.keys(tanaMap).sort((a,b)=>(tanaMap[b].amt-tanaMap[a].amt)||a.localeCompare(b,'ja'));
+  ps.forEach(p=>{ const g=tanaMap[p],b=document.createElement("button");
+    b.innerHTML=escT(p)+'<small>'+g.cnt+'品目・'+yenS(g.amt)+'</small>';
+    b.onclick=()=>{ tanaSelP=p;renderTanaNumsView(); };
     el.appendChild(b); });
-  if(tanaSelN!=null) renderTanaList(tanaSelP+tanaSelN);
 }
-function renderTanaList(shelf){
+function renderTanaNumsView(){                                 // 2画面目：棚番号（昇順・金額付き）
+  const g=tanaMap[tanaSelP];
+  $("tanaGroups").style.display="none";$("tanaList").innerHTML="";$("tanaSum").textContent="";
+  const bk=$("tanaBack");bk.style.display="block";bk.textContent="← メーカー選択に戻る";bk.onclick=renderTanaGroups;
+  const nums=Object.keys(g.nums).map(Number).sort((a,b)=>a-b);
+  if(nums.length===1&&nums[0]===-1){ $("tanaNums").style.display="none";renderTanaList(tanaSelP,"groups");return; }
+  const el=$("tanaNums");el.style.display="grid";el.innerHTML="";
+  nums.forEach(n=>{ const s=g.nums[n],b=document.createElement("button");
+    b.innerHTML=(n===-1?'－':escT(String(n)))+'<small>'+s.cnt+'品目・'+yenS(s.amt)+'</small>';
+    b.onclick=()=>{ renderTanaList(n===-1?tanaSelP:tanaSelP+n,"nums"); };
+    el.appendChild(b); });
+}
+function renderTanaList(shelf,from){                           // 3画面目：棚の商品一覧
+  $("tanaNums").style.display="none";$("tanaGroups").style.display="none";
+  const bk=$("tanaBack");bk.style.display="block";
+  bk.textContent=(from==="nums")?"← 棚番号選択に戻る":"← メーカー選択に戻る";
+  bk.onclick=(from==="nums")?renderTanaNumsView:renderTanaGroups;
   // 在庫検索タブから同じ棚の在庫を商品ごとに集計
   const stock={};
   if(stRows)for(let i=1;i<stRows.length;i++){ const r=stRows[i];
