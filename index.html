@@ -76,6 +76,23 @@
   #flash{position:fixed;inset:0;pointer-events:none;opacity:0;z-index:50;}
   #flash.g{background:#4caf50;}#flash.r{background:#f44336;}
   /* 在庫検索ローディング */
+  /* ===== 印刷（PCから棚の一覧を印刷する用）=====
+     画面用の固定ヘッダーやボタンは印刷では邪魔＆本文に重なるため、印刷時は隠して一覧だけを出す */
+  @media print{
+    @page{margin:12mm;}
+    body{background:#fff;}
+    header{position:static;background:#fff;color:#000;padding:0 0 6px;font-size:14pt;box-shadow:none;}
+    #btnHome,.tback,#tanaGroups,#tanaNums,#flash,#loading,#reader,.btnrow,#manualrow,#dbg,#msg,
+    #home,#scan,#kenpinResult,#stockResult,#btnNext{display:none!important;}
+    #tanaSum{padding:0 0 8px;font-size:12pt;color:#000;}
+    #tanaList{padding:0;}
+    .titem{box-shadow:none;border:1px solid #ccc;border-radius:0;padding:5px 8px;margin:0 0 3px;
+           break-inside:avoid;page-break-inside:avoid;}
+    .titem.z{background:#fff;}
+    .titem.z .nm2,.titem.z .q2{color:#777;}
+    .titem .nm2{font-size:11pt;}
+    .titem .q2{font-size:13pt;color:#000;}
+  }
   #loading{display:none;text-align:center;padding:48px 14px;}
   .spinner{width:46px;height:46px;border:5px solid #cce8e3;border-top-color:#00695c;border-radius:50%;margin:0 auto;animation:spin .8s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
