@@ -428,9 +428,23 @@ function stockLocalLookup(code){
 }
 /* ===== 配列検索（棚番→商品一覧）。先読み済みの商品索引＋在庫検索だけで動く（通信なし） ===== */
 let tanaSelP=null, tanaMap=null;
-function tnorm(t){ return String(t||"").trim().normalize('NFKC'); }   // 全角数字の棚番（東１等）も統一
-function tanaParse(t){ const m=tnorm(t).match(/^(.*?)(\d+)$/);
-  if(m&&m[1])return[m[1],Number(m[2])]; return[tnorm(t),null]; }
+function tnorm(t){ return String(t||"").trim().normalize('NFKC'); }   // 全角数字の棚番も統一
+// 棚ではない区分（場所を表さない）は配列検索に出さない
+const TANA_HIDE=['設定なし','販売終了品','-','－','本社在庫品','99',''];
+// 棚番を[列, 位置]に分解
+//   新形式 A221 → ['A2', 21]（英字+数字1桁=列 / 下2桁=何個目の棚・何段目）
+//   旧形式 向18 → ['向', 18]（従来どおり）
+function tanaParse(t){
+  const s=tnorm(t);
+  const ab=s.match(/^([A-Za-z]\d)(\d{2})$/);
+  if(ab)return[ab[1].toUpperCase(), Number(ab[2])];
+  const m=s.match(/^(.*?)(\d+)$/);
+  if(m&&m[1])return[m[1],Number(m[2])];
+  return[s,null];
+}
+// 新形式(A221)は位置を2桁ゼロ埋めで表示（21→"21"、5→"05"）
+function tanaLabel(p,n){ return /^[A-Z]\d$/.test(p) ? ('0'+n).slice(-2) : String(n); }
+function tanaCode(p,n){ return /^[A-Z]\d$/.test(p) ? p+('0'+n).slice(-2) : p+n; }
 function escT(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function yenS(a){ return a>=10000 ? Math.round(a/10000).toLocaleString('ja-JP')+'万円'
                                   : Math.round(a).toLocaleString('ja-JP')+'円'; }
@@ -451,16 +465,17 @@ function buildTana(){
     setTimeout(()=>{ if(app==="tana"&&!tanaMap) buildTana(); },700);
     return;
   }
-  // 棚グループ（メーカー名等）→ 番号ごとの品目数・在庫金額を集計
+  // 棚の列（A2/B1/向 等）→ 位置ごとの品目数・在庫金額を集計（棚でない区分は除外）
   tanaMap={};
-  const slot=t=>{ const[p,n]=tanaParse(t), k=(n!=null?n:-1);
+  const slot=t=>{ if(TANA_HIDE.indexOf(t)>=0)return null;
+    const[p,n]=tanaParse(t), k=(n!=null?n:-1);
     if(!tanaMap[p])tanaMap[p]={nums:{},amt:0,cnt:0};
     if(!tanaMap[p].nums[k])tanaMap[p].nums[k]={amt:0,cnt:0};
     return [tanaMap[p], tanaMap[p].nums[k]]; };
   for(let i=1;i<stIdx.length;i++){ const t=tnorm(gvCell(stIdx[i],2)); if(!t)continue;
-    const[g,s]=slot(t); g.cnt++; s.cnt++; }
+    const r=slot(t); if(!r)continue; r[0].cnt++; r[1].cnt++; }
   for(let i=1;i<stRows.length;i++){ const t=tnorm(gvCell(stRows[i],2)); if(!t)continue;
-    const[g,s]=slot(t); const a=gvNum(stRows[i],15); g.amt+=a; s.amt+=a; }
+    const r=slot(t); if(!r)continue; const a=gvNum(stRows[i],15); r[0].amt+=a; r[1].amt+=a; }
   renderTanaGroups();
 }
 function renderTanaGroups(){                                   // 1画面目：メーカー名等（在庫金額の多い順）
@@ -468,7 +483,13 @@ function renderTanaGroups(){                                   // 1画面目：�
   $("tanaBack").style.display="none";$("tanaNums").style.display="none";
   $("tanaList").innerHTML="";$("tanaSum").textContent="";
   const el=$("tanaGroups");el.style.display="grid";el.innerHTML="";
-  const ps=Object.keys(tanaMap).sort((a,b)=>(tanaMap[b].amt-tanaMap[a].amt)||a.localeCompare(b,'ja'));
+  // A/B列は棚の並び順（A1→A2→…→B7）。それ以外（向・冷・毒・追補）は在庫金額の多い順で後ろに
+  const isAB=k=>/^[A-Z]\d$/.test(k);
+  const ps=Object.keys(tanaMap).filter(k=>tanaMap[k].amt>0).sort((a,b)=>{   // 在庫ゼロの列は非表示
+    if(isAB(a)!==isAB(b))return isAB(a)?-1:1;
+    if(isAB(a))return a.localeCompare(b);
+    return (tanaMap[b].amt-tanaMap[a].amt)||a.localeCompare(b,'ja');
+  });
   ps.forEach(p=>{ const g=tanaMap[p],b=document.createElement("button");
     b.innerHTML=escT(p)+'<small>'+g.cnt+'品目・'+yenS(g.amt)+'</small>';
     b.onclick=()=>{ tanaSelP=p;renderTanaNumsView(); };
@@ -477,19 +498,19 @@ function renderTanaGroups(){                                   // 1画面目：�
 function renderTanaNumsView(){                                 // 2画面目：棚番号（昇順・金額付き）
   const g=tanaMap[tanaSelP];
   $("tanaGroups").style.display="none";$("tanaList").innerHTML="";$("tanaSum").textContent="";
-  const bk=$("tanaBack");bk.style.display="block";bk.textContent="← メーカー選択に戻る";bk.onclick=renderTanaGroups;
-  const nums=Object.keys(g.nums).map(Number).sort((a,b)=>a-b);
+  const bk=$("tanaBack");bk.style.display="block";bk.textContent="← 棚の列を選び直す";bk.onclick=renderTanaGroups;
+  const nums=Object.keys(g.nums).map(Number).filter(n=>g.nums[n].amt>0).sort((a,b)=>a-b);   // 在庫ゼロの棚は非表示
   if(nums.length===1&&nums[0]===-1){ $("tanaNums").style.display="none";renderTanaList(tanaSelP,"groups");return; }
   const el=$("tanaNums");el.style.display="grid";el.innerHTML="";
   nums.forEach(n=>{ const s=g.nums[n],b=document.createElement("button");
-    b.innerHTML=(n===-1?'－':escT(String(n)))+'<small>'+s.cnt+'品目・'+yenS(s.amt)+'</small>';
-    b.onclick=()=>{ renderTanaList(n===-1?tanaSelP:tanaSelP+n,"nums"); };
+    b.innerHTML=(n===-1?'－':escT(tanaLabel(tanaSelP,n)))+'<small>'+s.cnt+'品目・'+yenS(s.amt)+'</small>';
+    b.onclick=()=>{ renderTanaList(n===-1?tanaSelP:tanaCode(tanaSelP,n),"nums"); };
     el.appendChild(b); });
 }
 function renderTanaList(shelf,from){                           // 3画面目：棚の商品一覧
   $("tanaNums").style.display="none";$("tanaGroups").style.display="none";
   const bk=$("tanaBack");bk.style.display="block";
-  bk.textContent=(from==="nums")?"← 棚番号選択に戻る":"← メーカー選択に戻る";
+  bk.textContent=(from==="nums")?"← 棚の位置を選び直す":"← 棚の列を選び直す";
   bk.onclick=(from==="nums")?renderTanaNumsView:renderTanaGroups;
   // 在庫検索タブから同じ棚の在庫を商品ごとに集計
   const stock={};
