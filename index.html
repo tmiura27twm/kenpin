@@ -259,7 +259,7 @@ function hideLoad(){$("loading").style.display="none";}
    検品を開いた時点で伝票一覧＋検品済ログをスプシから直読みしておき、QR読取時はスマホ内で即照会。
    読み込み前や見つからない時は従来のApps Script照会に自動フォールバック。 */
 let dnRows=null, dnIdx=null, dnLog=null, dnMik=null, dnLoadedAt=0;
-let mikRows=null, mikDay="ALL", mikSel=null;   // 未検品リスト用（mikSel=選択中ルートのSet／nullで全件）
+let mikRows=null, mikDaySel=null, mikSel=null;  // 未検品リスト用（Set＝選択中／nullで全件）
 let mikTimer=null, mikUpdAt="";                 // 自動更新タイマーと最終更新時刻
 let mikNewOnly=false;                          // 詳細検索「新着のみ」
 const MIK_NEW_MS=5*60*1000;                    // 新着として色分けする時間（5分）
@@ -521,7 +521,7 @@ function openMiken(){
   $("home").style.display="none";$("scan").style.display="none";$("kenpinResult").style.display="none";
   $("stockResult").style.display="none";$("tanaView").style.display="none";$("loading").style.display="none";
   $("mikenView").style.display="block";$("msg").textContent="";
-  mikDay="ALL";mikSel=null;mikNewOnly=false;$("mikPanel").style.display="none";
+  mikDaySel=null;mikSel=null;mikNewOnly=false;$("mikPanel").style.display="none";
   preloadDenpyo();buildMiken();startMikenAuto();
 }
 /* 開いている間は自動で最新化（1分ごと）。画面を離れるとタイマーは自分で止まる */
@@ -576,14 +576,21 @@ function buildMiken(){
   // 取引日（古い順＝出荷が近い順）
   const days=[...new Set(mikRows.map(r=>r.day))].sort();
   const de=$("mikDays");de.innerHTML="";
-  const mkDay=(label,val)=>{ const b=document.createElement("button");
-    b.textContent=label;b.className=(mikDay===val)?"on":"";
-    b.onclick=()=>{ mikDay=val;buildMiken(); };return b; };
-  de.appendChild(mkDay("すべて("+mikRows.length+")","ALL"));
-  days.forEach(d=>de.appendChild(mkDay(mikDayLabel(d)+"("+mikRows.filter(r=>r.day===d).length+")",d)));
+  const allD=document.createElement("button");
+  allD.textContent="すべて("+mikRows.length+")";allD.className=mikDaySel?"":"on";
+  allD.onclick=()=>{ mikDaySel=null;buildMiken(); };de.appendChild(allD);
+  days.forEach(d=>{ const b=document.createElement("button");
+    b.textContent=mikDayLabel(d)+"("+mikRows.filter(r=>r.day===d).length+")";
+    b.className=(mikDaySel&&mikDaySel.has(d))?"on":"";
+    b.onclick=()=>{                                  // タップで追加／もう一度で解除
+      if(!mikDaySel)mikDaySel=new Set();
+      if(mikDaySel.has(d))mikDaySel.delete(d); else mikDaySel.add(d);
+      if(!mikDaySel.size)mikDaySel=null;
+      buildMiken(); };
+    de.appendChild(b); });
   // ルート：件数0でも選べるように、過去に見たルートを含めて全部並べる
   //（0件のルートを先に選んでおけば、そこに新着が入った時にすぐ気付ける）
-  const base=mikRows.filter(r=>mikDay==="ALL"||r.day===mikDay);
+  const base=mikRows.filter(r=>!mikDaySel||mikDaySel.has(r.day));
   const cnt={};base.forEach(r=>cnt[r.route]=(cnt[r.route]||0)+1);
   mikRows.forEach(r=>mikKnown[r.route]=1);            // 今回見たルートを記憶に追加
   if(mikSel)[...mikSel].forEach(r=>mikKnown[r]=1);    // 選択中のものは必ず残す
@@ -616,7 +623,8 @@ function renderMiken(base){
   $("mikSum").textContent="未検品 "+rows.length+" 件"+(newCnt?"（うち新着 "+newCnt+" 件）":"");
   // 検索バーに現在の条件を要約表示（ルートが多い時は件数だけ）
   const cond=[];
-  cond.push(mikDay==="ALL"?"全日付":mikDayLabel(mikDay));
+  cond.push(!mikDaySel?"全日付"
+    :(mikDaySel.size<=3?[...mikDaySel].sort().map(mikDayLabel).join("・"):(mikDaySel.size+"日選択")));
   if(mikSel) cond.push(mikSel.size<=2?[...mikSel].join("・"):("ルート"+mikSel.size+"件選択"));
   else cond.push("全ルート");
   if(mikNewOnly) cond.push("新着のみ");
@@ -1008,7 +1016,7 @@ function manualGo(){const v=$("manualIn").value.trim();if(!v)return;$("manualIn"
 $("mikFilterBtn").onclick=()=>{ const p=$("mikPanel");
   p.style.display=(p.style.display==="none")?"block":"none"; };
 $("mikClose").onclick=()=>{ $("mikPanel").style.display="none"; };
-$("mikClear").onclick=()=>{ mikDay="ALL";mikSel=null;mikNewOnly=false;buildMiken(); };
+$("mikClear").onclick=()=>{ mikDaySel=null;mikSel=null;mikNewOnly=false;buildMiken(); };
 $("btnManual").onclick=manualGo;
 $("manualIn").addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();manualGo();}});
 $("btnNext").onclick=()=>{$("card").style.display="none";$("btnNext").style.display="none";$("stockErr").style.display="none";$("loading").style.display="none";
