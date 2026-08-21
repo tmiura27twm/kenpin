@@ -59,6 +59,10 @@
   #mikClear{background:#eceff1;color:#455a64;}
   #mikClose{background:#c62828;color:#fff;}
   #mikUpd{padding:0 14px 6px;font-size:11px;color:#90a4ae;}
+  /* 新着（5分以内に現れた伝票）を色分け */
+  .mitem.new{background:#fff8e1;border-left:5px solid #ff9800;box-shadow:0 1px 3px rgba(255,152,0,.35);}
+  .mitem .nbadge{display:inline-block;background:#ff9800;color:#fff;border-radius:4px;
+                 padding:1px 5px;font-size:10px;margin-right:5px;vertical-align:1px;}
   /* 配列検索（棚番→商品一覧）：画面全体の大ボタンで選ぶ */
   .tgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 14px;}
   .tgrid.nums{grid-template-columns:repeat(3,1fr);}
@@ -192,7 +196,8 @@
     <div id="mikCond">すべて表示中</div>
   </div>
   <div id="mikPanel" style="display:none;">
-    <div class="fbar"><div class="lbl">取引日</div><div id="mikDays" class="fchips"></div></div>
+    <div class="fbar"><div class="lbl">表示</div><div id="mikNew" class="fchips"></div></div>
+    <div class="fbar" style="padding-top:12px;"><div class="lbl">取引日</div><div id="mikDays" class="fchips"></div></div>
     <div class="fbar" style="padding-top:12px;"><div class="lbl">ルート（タップで複数選べます）</div><div id="mikRoutes" class="fchips"></div></div>
     <div class="mikact"><button id="mikClear">条件をクリア</button><button id="mikClose">この条件で見る</button></div>
   </div>
@@ -254,6 +259,10 @@ function hideLoad(){$("loading").style.display="none";}
 let dnRows=null, dnIdx=null, dnLog=null, dnMik=null, dnLoadedAt=0;
 let mikRows=null, mikDay="ALL", mikSel=null;   // 未検品リスト用（mikSel=選択中ルートのSet／nullで全件）
 let mikTimer=null, mikUpdAt="";                 // 自動更新タイマーと最終更新時刻
+let mikNewOnly=false;                          // 詳細検索「新着のみ」
+const MIK_NEW_MS=5*60*1000;                    // 新着として色分けする時間（5分）
+// 取引NO→最初に見つけた時刻。端末に保存し、アプリを開き直しても新着判定が続くようにする
+let mikSeen=(()=>{ try{ return JSON.parse(localStorage.getItem("mikSeen")||"{}"); }catch(e){ return {}; } })();
 function gvCell(row,i){const c=row.c[i];return c?(c.f!=null?c.f:(c.v!=null?String(c.v):"")):"";}
 function gvNum(row,i){const c=row.c[i];return (c&&c.v!=null)?Number(c.v):0;}
 function preloadDenpyo(force){
@@ -279,6 +288,11 @@ window.onDnMik=function(resp){
       mikRows.push({no:no, day:gvCell(rows[i],1), toku:gvCell(rows[i],3),
                     tanto:gvCell(rows[i],4), route:gvCell(rows[i],8)||"(未設定)"});
     }
+    // 新着判定：初めて見た伝票に現在時刻を記録（初回起動時は全件を既存扱いにして誤検知を防ぐ）
+    const now=Date.now(), first=(Object.keys(mikSeen).length===0), keep={};
+    mikRows.forEach(r=>{ keep[r.no]=(mikSeen[r.no]!=null)?mikSeen[r.no]:(first?0:now); });
+    mikSeen=keep;                                  // 一覧から消えた伝票は保存対象から外す
+    try{ localStorage.setItem("mikSeen",JSON.stringify(mikSeen)); }catch(e){}
     const t=new Date();
     mikUpdAt=('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2);
     if(app==="miken") buildMiken();           // 表示中なら即反映
@@ -503,7 +517,7 @@ function openMiken(){
   $("home").style.display="none";$("scan").style.display="none";$("kenpinResult").style.display="none";
   $("stockResult").style.display="none";$("tanaView").style.display="none";$("loading").style.display="none";
   $("mikenView").style.display="block";$("msg").textContent="";
-  mikDay="ALL";mikSel=null;$("mikPanel").style.display="none";
+  mikDay="ALL";mikSel=null;mikNewOnly=false;$("mikPanel").style.display="none";
   preloadDenpyo();buildMiken();startMikenAuto();
 }
 /* 開いている間は自動で最新化（1分ごと）。画面を離れるとタイマーは自分で止まる */
@@ -534,6 +548,13 @@ function buildMiken(){
     setTimeout(()=>{ if(app==="miken"&&!mikRows) buildMiken(); },700);
     return;
   }
+  // 表示（すべて／新着のみ）
+  const ne=$("mikNew");ne.innerHTML="";
+  const newCnt=mikRows.filter(r=>isMikNew(r.no)).length;
+  [["すべて",false],["新着のみ("+newCnt+")",true]].forEach(([label,val])=>{
+    const b=document.createElement("button");
+    b.textContent=label;b.className=(mikNewOnly===val)?"on":"";
+    b.onclick=()=>{ mikNewOnly=val;buildMiken(); };ne.appendChild(b); });
   // 取引日（古い順＝出荷が近い順）
   const days=[...new Set(mikRows.map(r=>r.day))].sort();
   const de=$("mikDays");de.innerHTML="";
@@ -562,19 +583,26 @@ function buildMiken(){
     re.appendChild(b); });
   renderMiken(base);
 }
+function isMikNew(no){ const t=mikSeen[no]; return !!t && (Date.now()-t)<MIK_NEW_MS; }
 function renderMiken(base){
-  const rows=base.filter(r=>!mikSel||mikSel.has(r.route))
-    .sort((a,b)=>a.day.localeCompare(b.day)||a.route.localeCompare(b.route,'ja')||a.no.localeCompare(b.no));
-  $("mikSum").textContent="未検品 "+rows.length+" 件";
+  let rows=base.filter(r=>!mikSel||mikSel.has(r.route));
+  if(mikNewOnly) rows=rows.filter(r=>isMikNew(r.no));
+  // 新着を先頭へ（その後は 日付→ルート→伝票番号 順）
+  rows.sort((a,b)=>(isMikNew(b.no)?1:0)-(isMikNew(a.no)?1:0)
+    ||a.day.localeCompare(b.day)||a.route.localeCompare(b.route,'ja')||a.no.localeCompare(b.no));
+  const newCnt=base.filter(r=>isMikNew(r.no)).length;
+  $("mikSum").textContent="未検品 "+rows.length+" 件"+(newCnt?"（うち新着 "+newCnt+" 件）":"");
   // 検索バーに現在の条件を要約表示（ルートが多い時は件数だけ）
   const cond=[];
   cond.push(mikDay==="ALL"?"全日付":mikDayLabel(mikDay));
   if(mikSel) cond.push(mikSel.size<=2?[...mikSel].join("・"):("ルート"+mikSel.size+"件選択"));
   else cond.push("全ルート");
+  if(mikNewOnly) cond.push("新着のみ");
   $("mikCond").textContent=cond.join(" ／ ");
   $("mikUpd").textContent=mikUpdAt?("最終更新 "+mikUpdAt+"（1分ごとに自動更新）"):"";
   $("mikList").innerHTML = rows.length
-    ? rows.map(r=>'<div class="mitem"><div class="mno">'+esc2(r.no)+'</div>'
+    ? rows.map(r=>'<div class="mitem'+(isMikNew(r.no)?' new':'')+'"><div class="mno">'
+        +(isMikNew(r.no)?'<span class="nbadge">新着</span>':'')+esc2(r.no)+'</div>'
         +'<div class="mtk">'+esc2(r.toku)+'<div style="font-weight:normal;font-size:11px;color:#90a4ae;">'+esc2(r.tanto)+'</div></div>'
         +'<div style="text-align:right;"><div class="mrt">'+esc2(r.route)+'</div>'
         +'<div class="mdy">'+mikDayLabel(r.day)+'</div></div></div>').join('')
@@ -958,7 +986,7 @@ function manualGo(){const v=$("manualIn").value.trim();if(!v)return;$("manualIn"
 $("mikFilterBtn").onclick=()=>{ const p=$("mikPanel");
   p.style.display=(p.style.display==="none")?"block":"none"; };
 $("mikClose").onclick=()=>{ $("mikPanel").style.display="none"; };
-$("mikClear").onclick=()=>{ mikDay="ALL";mikSel=null;buildMiken(); };
+$("mikClear").onclick=()=>{ mikDay="ALL";mikSel=null;mikNewOnly=false;buildMiken(); };
 $("btnManual").onclick=manualGo;
 $("manualIn").addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();manualGo();}});
 $("btnNext").onclick=()=>{$("card").style.display="none";$("btnNext").style.display="none";$("stockErr").style.display="none";$("loading").style.display="none";

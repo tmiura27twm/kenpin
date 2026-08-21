@@ -1,6 +1,6 @@
 // 倉庫ツール Service Worker（アプリ化用）
 // データはApps Script（ネット必須）。ここではアプリの外枠だけキャッシュして起動を速くする。
-const CACHE = 'soko-v17';
+const CACHE = 'soko-v18';
 self.addEventListener('install', e => {
   self.skipWaiting();
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./', './index.html', './manifest.json', './zxing.min.js']).catch(() => {})));
