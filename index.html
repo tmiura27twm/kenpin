@@ -61,6 +61,16 @@
   #mikClear{background:#eceff1;color:#455a64;}
   #mikClose{background:#c62828;color:#fff;}
   #mikUpd{padding:0 14px 6px;font-size:11px;color:#90a4ae;}
+  /* 検品者選択 */
+  #hpick{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;display:flex;align-items:flex-end;}
+  #hpick .hbox{background:#fff;width:100%;max-height:85vh;overflow-y:auto;border-radius:16px 16px 0 0;padding:16px 14px 22px;}
+  #hpick .hhd{font-size:19px;font-weight:bold;margin-bottom:4px;}
+  #hpick .hnote{font-size:12px;color:#78909c;margin-bottom:12px;}
+  #hgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  #hgrid button{padding:15px 6px;border:0;border-radius:11px;background:#eceff1;color:#263238;
+                font-size:16px;font-weight:bold;}
+  #hgrid button.on{background:#1565c0;color:#fff;}
+  #meBtn{background:#546e7a;color:#fff;border:0;border-radius:6px;padding:6px 10px;font-size:13px;font-weight:bold;margin-right:6px;}
   /* 新着（5分以内に現れた伝票）を色分け */
   .mitem.new{background:#fff8e1;border-left:5px solid #ff9800;box-shadow:0 1px 3px rgba(255,152,0,.35);}
   .mitem .nbadge{display:inline-block;background:#ff9800;color:#fff;border-radius:4px;
@@ -134,7 +144,7 @@
 </style>
 </head>
 <body>
-<header><span id="title">📋 メニュー</span><button id="btnHome" onclick="goHome()">≡ メニュー</button></header>
+<header><span id="title">📋 メニュー</span><span><button id="meBtn" style="display:none;" onclick="openPicker()"></button><button id="btnHome" onclick="goHome()">≡ メニュー</button></span></header>
 
 <!-- メニュー -->
 <div id="home">
@@ -208,6 +218,15 @@
   <div id="mikList" style="padding-bottom:24px;"></div>
 </div>
 
+<!-- 検品者を選ぶ（検品時に配達者CDを記録するため。ハンディーと同じ状態にする） -->
+<div id="hpick" style="display:none;">
+  <div class="hbox">
+    <div class="hhd">検品者を選んでください</div>
+    <div class="hnote">検品した伝票に配達者として記録されます</div>
+    <div id="hgrid"></div>
+  </div>
+</div>
+
 <!-- 照会中（検品・在庫検索 共通）-->
 <div id="loading"><div class="spinner"></div><div style="margin-top:14px;font-size:16px;color:#00695c;font-weight:bold;">照会中...</div></div>
 <div id="flash"></div>
@@ -260,6 +279,9 @@ function hideLoad(){$("loading").style.display="none";}
    読み込み前や見つからない時は従来のApps Script照会に自動フォールバック。 */
 let dnRows=null, dnIdx=null, dnLog=null, dnMik=null, dnLoadedAt=0;
 let mikRows=null, mikDaySel=null, mikSel=null;  // 未検品リスト用（Set＝選択中／nullで全件）
+// 検品者（＝配達者CD）。端末に記憶し、次回からは選び直し不要
+let hlist=null;
+let hme=(()=>{ try{ return JSON.parse(localStorage.getItem("kenpinMe")||"null"); }catch(e){ return null; } })();
 let mikTimer=null, mikUpdAt="";                 // 自動更新タイマーと最終更新時刻
 let mikNewOnly=false;                          // 詳細検索「新着のみ」
 const MIK_NEW_MS=5*60*1000;                    // 新着として色分けする時間（5分）
@@ -356,16 +378,17 @@ function openKenpin(){app="kenpin";mode="denpyo";data=null;scanned={};lastCode="
   $("title").textContent="📦 検品";$("btnHome").style.display="inline-block";$("btnReset").style.display="inline-block";
   $("home").style.display="none";$("scan").style.display="block";$("kenpinResult").style.display="block";$("stockResult").style.display="none";$("loading").style.display="none";$("tanaView").style.display="none";$("mikenView").style.display="none";
   $("info").textContent="伝票QRを読み取ってください";$("tb").innerHTML="";$("done").style.display="none";$("msg").textContent="";
-  setManualHint();preloadDenpyo();startScan();}
+  setManualHint();preloadDenpyo();showMe();
+  if(!hme){ openPicker(); } else { startScan(); }}
 function openStock(){app="stock";data=null;lastCode="";document.body.className="stockmode";
   $("title").textContent="🔍 在庫検索";$("btnHome").style.display="inline-block";$("btnReset").style.display="none";
   $("home").style.display="none";$("scan").style.display="block";$("kenpinResult").style.display="none";$("stockResult").style.display="block";$("tanaView").style.display="none";$("mikenView").style.display="none";
   $("card").style.display="none";$("btnNext").style.display="none";$("loading").style.display="none";$("stockErr").style.display="none";$("msg").textContent="商品のバーコードを読み取ってください";
-  setManualHint();preloadStock();startScan();}
+  setManualHint();preloadStock();showMe();startScan();}
 function openShukko(){stopScan();window.open(SHUKKO_URL,'_blank')||(location.href=SHUKKO_URL);}
 function goHome(){stopScan();app="home";lastCode="";document.body.className="";
   $("title").textContent="📋 メニュー";$("btnHome").style.display="none";$("loading").style.display="none";
-  $("home").style.display="block";$("scan").style.display="none";$("kenpinResult").style.display="none";$("stockResult").style.display="none";$("tanaView").style.display="none";$("mikenView").style.display="none";$("msg").textContent="";}
+  $("home").style.display="block";$("scan").style.display="none";$("kenpinResult").style.display="none";$("stockResult").style.display="none";$("tanaView").style.display="none";$("mikenView").style.display="none";$("msg").textContent="";showMe();}
 
 /* ===== スキャン結果の振り分け ===== */
 function onScan(text,fmt){
@@ -374,6 +397,31 @@ function onScan(text,fmt){
   lastCode=text;lastTime=now;
   if(app==="stock") lookupStock(text);
   else if(app==="kenpin"){ if(mode==="denpyo")loadDenpyo(text); else matchItem(text); }
+}
+
+/* ===== 検品者（配達者CD）の選択 ===== */
+function openPicker(){
+  const g=$("hgrid");g.innerHTML="";
+  if(!hlist||!hlist.length){
+    g.innerHTML='<div style="grid-column:1/-1;color:#777;text-align:center;padding:16px;">'
+      +'配達者リストを読み込み中です。少し待ってからもう一度押してください。</div>';
+  }else{
+    hlist.forEach(h=>{ const b=document.createElement("button");
+      b.textContent=h.nm;
+      b.className=(hme&&hme.cd===h.cd)?"on":"";
+      b.onclick=()=>{ hme={cd:h.cd,nm:h.nm};
+        try{ localStorage.setItem("kenpinMe",JSON.stringify(hme)); }catch(e){}
+        $("hpick").style.display="none";showMe();
+        if(app==="kenpin") startScan();          // 選択後すぐ検品を続けられるように
+      };
+      g.appendChild(b); });
+  }
+  stopScan();$("hpick").style.display="flex";
+}
+function showMe(){
+  const b=$("meBtn");
+  if(app==="kenpin"){ b.style.display="inline-block"; b.textContent="👤 "+(hme?hme.nm:"検品者を選ぶ"); }
+  else b.style.display="none";
 }
 
 /* ===== 検品 ===== */
@@ -439,7 +487,9 @@ function checkDone(){
     if(!data._recorded){data._recorded=true;recordDone();}}}
 // 検品完了→検品済ログへ自動記録（次回同じ伝票QRを読むと「検品済み」表示になる）
 async function recordDone(){
-  const p={done:'1'+data.取引NO, toku:data.得意先||''}; if(ACCESS_PIN)p.pin=ACCESS_PIN;
+  if(!hme){ openPicker(); data._recorded=false; return; }     // 検品者未選択なら記録しない
+  const p={done:'1'+data.取引NO, toku:data.得意先||'', hcd:hme.cd, hnm:hme.nm};
+  if(ACCESS_PIN)p.pin=ACCESS_PIN;
   const j=await jsonp(p);
   if(j.ok){
     if(!dnLog)dnLog={};
@@ -463,6 +513,7 @@ function preloadStock(force){
     const load=src=>{const s=document.createElement("script");s.src=src;s.onerror=()=>{};document.body.appendChild(s);};
     load(base+"?headers=0&sheet="+encodeURIComponent("在庫検索")+"&tqx=responseHandler:onStBody");
     load(base+"?headers=0&sheet="+encodeURIComponent("商品索引")+"&tqx=responseHandler:onStIdx");
+    load(base+"?headers=0&sheet="+encodeURIComponent("配達者")+"&tqx=responseHandler:onHaitatsu");
   };
   const cached=localStorage.getItem("dataSsId");
   if(cached){ go(cached); return; }
@@ -476,6 +527,19 @@ window.onStBody=function(resp){
     stRows=rows; stLoadedAt=Date.now();
     const n=new Date(); stFetchedAt=('0'+n.getHours()).slice(-2)+':'+('0'+n.getMinutes()).slice(-2);
   }catch(e){}
+};
+// 配達者マスタ（検品者の選択肢）
+window.onHaitatsu=function(resp){
+  try{
+    if(resp.status!=="ok")return;
+    const rows=resp.table.rows;
+    if(!rows.length||gvCell(rows[0],1)!=="配達者名")return;
+    hlist=[];
+    for(let i=1;i<rows.length;i++){
+      const cd=gvCell(rows[i],0).trim(), nm=gvCell(rows[i],1).trim();
+      if(cd&&nm) hlist.push({cd:cd,nm:nm});
+    }
+  }catch(e){ hlist=null; }
 };
 window.onStIdx=function(resp){
   try{
@@ -522,7 +586,7 @@ function openMiken(){
   $("stockResult").style.display="none";$("tanaView").style.display="none";$("loading").style.display="none";
   $("mikenView").style.display="block";$("msg").textContent="";
   mikDaySel=null;mikSel=null;mikNewOnly=false;$("mikPanel").style.display="none";
-  preloadDenpyo();buildMiken();startMikenAuto();
+  preloadDenpyo();buildMiken();startMikenAuto();showMe();
 }
 /* 開いている間は自動で最新化（1分ごと）。画面を離れるとタイマーは自分で止まる */
 function startMikenAuto(){
@@ -668,7 +732,7 @@ function openTana(){
   $("home").style.display="none";$("scan").style.display="none";$("kenpinResult").style.display="none";
   $("stockResult").style.display="none";$("loading").style.display="none";$("mikenView").style.display="none";$("tanaView").style.display="block";
   $("msg").textContent="";tanaSelP=null;tanaMap=null;
-  preloadStock();buildTana();
+  preloadStock();buildTana();showMe();
 }
 function buildTana(){
   if(!stIdx||!stRows){
