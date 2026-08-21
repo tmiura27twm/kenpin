@@ -41,6 +41,8 @@
   .fchips button{padding:7px 13px;border-radius:16px;border:1px solid #b0bec5;background:#fff;
                  font-size:14px;font-weight:bold;color:#455a64;}
   .fchips button.on{background:#c62828;border-color:#c62828;color:#fff;}
+  .fchips button.zero{color:#b0bec5;border-color:#e0e0e0;}      /* 0件でも選択できる */
+  .fchips button.zero.on{background:#ef9a9a;border-color:#ef9a9a;color:#fff;}
   .mitem{background:#fff;border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.08);
          padding:9px 12px;margin:0 14px 7px;display:flex;align-items:center;gap:10px;}
   .mitem .mno{font-size:13px;color:#607d8b;font-weight:bold;min-width:66px;}
@@ -263,6 +265,8 @@ let mikNewOnly=false;                          // 詳細検索「新着のみ」
 const MIK_NEW_MS=5*60*1000;                    // 新着として色分けする時間（5分）
 // 取引NO→最初に見つけた時刻。端末に保存し、アプリを開き直しても新着判定が続くようにする
 let mikSeen=(()=>{ try{ return JSON.parse(localStorage.getItem("mikSeen")||"{}"); }catch(e){ return {}; } })();
+// これまでに一度でも見たルート名（0件でも選択肢に残すために保持）
+let mikKnown=(()=>{ try{ return JSON.parse(localStorage.getItem("mikKnown")||"{}"); }catch(e){ return {}; } })();
 function gvCell(row,i){const c=row.c[i];return c?(c.f!=null?c.f:(c.v!=null?String(c.v):"")):"";}
 function gvNum(row,i){const c=row.c[i];return (c&&c.v!=null)?Number(c.v):0;}
 function preloadDenpyo(force){
@@ -540,6 +544,20 @@ function refreshMiken(){
 document.addEventListener("visibilitychange",()=>{
   if(!document.hidden&&app==="miken"){ refreshMiken();startMikenAuto(); }
 });
+/* ルート名を読み（ひらがな）に変換して50音順に並べるためのキーを作る。
+   未登録の名前はそのまま比較、「設定なし」等は末尾へ。 */
+const MIK_YOMI=[["泉","いずみ"],["会社","かいしゃ"],["県北","けんぽく"],["県南","けんなん"],
+  ["塩釜","しおがま"],["白石","しろいし"],["仙台市内","せんだいしない"],["太白","たいはく"],
+  ["多賀城","たがじょう"],["直送","ちょくそう"],["名取","なとり"],["八幡","はちまん"],
+  ["利府","りふ"],["若林","わかばやし"],["亘理","わたり"]];
+function mikKana(name){
+  const n=String(name||"");
+  if(n==="設定なし"||n==="(未設定)"||n==="") return "￿"+n;   // 末尾に回す
+  for(const [kanji,yomi] of MIK_YOMI){
+    if(n.indexOf(kanji)===0) return yomi+n.slice(kanji.length);
+  }
+  return n;
+}
 function mikDayLabel(d){ const m=String(d).match(/(\d{1,2})[\/\-](\d{1,2})$/); return m?(m[1]+"/"+m[2]):d; }
 function buildMiken(){
   if(!mikRows){
@@ -563,18 +581,22 @@ function buildMiken(){
     b.onclick=()=>{ mikDay=val;buildMiken(); };return b; };
   de.appendChild(mkDay("すべて("+mikRows.length+")","ALL"));
   days.forEach(d=>de.appendChild(mkDay(mikDayLabel(d)+"("+mikRows.filter(r=>r.day===d).length+")",d)));
-  // ルート（選択中の日付に存在するものだけ・件数の多い順）
+  // ルート：件数0でも選べるように、過去に見たルートを含めて全部並べる
+  //（0件のルートを先に選んでおけば、そこに新着が入った時にすぐ気付ける）
   const base=mikRows.filter(r=>mikDay==="ALL"||r.day===mikDay);
   const cnt={};base.forEach(r=>cnt[r.route]=(cnt[r.route]||0)+1);
-  const routes=Object.keys(cnt).sort((a,b)=>(cnt[b]-cnt[a])||a.localeCompare(b,'ja'));
-  if(mikSel){ const keep=new Set([...mikSel].filter(x=>cnt[x])); mikSel=keep.size?keep:null; }
+  mikRows.forEach(r=>mikKnown[r.route]=1);            // 今回見たルートを記憶に追加
+  if(mikSel)[...mikSel].forEach(r=>mikKnown[r]=1);    // 選択中のものは必ず残す
+  try{ localStorage.setItem("mikKnown",JSON.stringify(mikKnown)); }catch(e){}
+  const routes=Object.keys(mikKnown).sort((a,b)=>mikKana(a).localeCompare(mikKana(b),'ja'));
   const re=$("mikRoutes");re.innerHTML="";
   const all=document.createElement("button");
   all.textContent="すべて";all.className=mikSel?"":"on";
   all.onclick=()=>{ mikSel=null;buildMiken(); };re.appendChild(all);
   routes.forEach(rt=>{ const b=document.createElement("button");
-    b.textContent=rt+"("+cnt[rt]+")";
-    b.className=(mikSel&&mikSel.has(rt))?"on":"";
+    const c=cnt[rt]||0;
+    b.textContent=rt+"("+c+")";
+    b.className=((mikSel&&mikSel.has(rt))?"on":"")+(c===0?" zero":"");
     b.onclick=()=>{                                  // 複数選択（タップで追加／もう一度で解除）
       if(!mikSel)mikSel=new Set();
       if(mikSel.has(rt))mikSel.delete(rt); else mikSel.add(rt);
