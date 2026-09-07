@@ -564,6 +564,8 @@ window.onStBody=function(resp){
     if(resp.status!=="ok")return;
     const rows=resp.table.rows;
     if(!rows.length || gvCell(rows[0],5)!=="ロット")return;   // タブ違い（未共有等）は不採用→GAS照会のまま
+    // 更新中の中途半端なデータを掴むと「在庫0」になるので、極端に減っていたら採用しない
+    if(stRows && rows.length < stRows.length*0.7){ setTimeout(()=>preloadStock(true),4000); return; }
     stRows=rows; stLoadedAt=Date.now();
     const n=new Date(); stFetchedAt=('0'+n.getHours()).slice(-2)+':'+('0'+n.getMinutes()).slice(-2);
   }catch(e){}
@@ -586,6 +588,7 @@ window.onStIdx=function(resp){
     if(resp.status!=="ok")return;
     const rows=resp.table.rows;
     if(!rows.length || gvCell(rows[0],1)!=="商品名")return;
+    if(stIdx && rows.length < stIdx.length*0.7) return;      // 更新中の欠けたデータは採用しない
     stIdx=rows;
   }catch(e){}
 };
