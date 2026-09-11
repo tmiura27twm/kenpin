@@ -71,7 +71,7 @@
                 font-size:16px;font-weight:bold;}
   #hgrid button.on{background:#1565c0;color:#fff;}
   #meBtn{background:#546e7a;color:#fff;border:0;border-radius:6px;padding:6px 10px;font-size:13px;font-weight:bold;margin-right:6px;}
-  /* 新着（5分以内に現れた伝票）を色分け */
+  /* 新着（発伝から5分以内の伝票）を色分け */
   .mitem.new{background:#fff8e1;border-left:5px solid #ff9800;box-shadow:0 1px 3px rgba(255,152,0,.35);}
   .mitem .nbadge{display:inline-block;background:#ff9800;color:#fff;border-radius:4px;
                  padding:1px 5px;font-size:10px;margin-right:5px;vertical-align:1px;}
@@ -284,11 +284,13 @@ let hlist=null;
 let hme=(()=>{ try{ return JSON.parse(localStorage.getItem("kenpinMe")||"null"); }catch(e){ return null; } })();
 let mikTimer=null, mikUpdAt="";                 // 自動更新タイマーと最終更新時刻
 let mikNewOnly=false;                          // 詳細検索「新着のみ」
-const MIK_NEW_MS=5*60*1000;                    // 新着として色分けする時間（5分）
-// 取引NO→最初に見つけた時刻。端末に保存し、アプリを開き直しても新着判定が続くようにする
-let mikSeen=(()=>{ try{ return JSON.parse(localStorage.getItem("mikSeen")||"{}"); }catch(e){ return {}; } })();
+const MIK_NEW_MS=5*60*1000;                    // 新着として色分けする時間（発伝から5分）
+// 使わなくなったルート名。名称変更前の古い名前が mikKnown に残り、0件のまま
+// 居座ってしまうため表示から除外する。※「直送　仙台調剤」は現役なので消さない
+const MIK_ROUTE_HIDE=["直送③","直送④","直送⑤"];
 // これまでに一度でも見たルート名（0件でも選択肢に残すために保持）
 let mikKnown=(()=>{ try{ return JSON.parse(localStorage.getItem("mikKnown")||"{}"); }catch(e){ return {}; } })();
+MIK_ROUTE_HIDE.forEach(r=>{ delete mikKnown[r]; });   // 保存済みの古い名前も消す
 function gvCell(row,i){const c=row.c[i];return c?(c.f!=null?c.f:(c.v!=null?String(c.v):"")):"";}
 function gvNum(row,i){const c=row.c[i];return (c&&c.v!=null)?Number(c.v):0;}
 function preloadDenpyo(force){
@@ -306,19 +308,16 @@ window.onDnMik=function(resp){
     dnMik={}; mikRows=[];
     if(resp.status!=="ok")return;
     const rows=resp.table.rows;
-    // 0:取引NO 1:取引日 2:得意先CD 3:得意先名 4:担当者 5:出庫日 6:出庫担当者 7:備考 8:ルート 9:検品済
+    // 0:取引NO 1:取引日 2:得意先CD 3:得意先名 4:担当者 5:出庫日 6:出庫担当者 7:備考 8:ルート 9:検品済 10:発伝日時
     for(let i=0;i<rows.length;i++){
       const no=String(gvCell(rows[i],0)).replace(/[^0-9]/g,"");
       if(!no)continue;                        // ヘッダー行は数値列でないため自然に除外される
+      const rt=gvCell(rows[i],8)||"(未設定)";
+      if(MIK_ROUTE_HIDE.indexOf(rt)>=0) continue;   // 使わなくなったルートは一覧に出さない
       dnMik[no]=true;
       mikRows.push({no:no, day:gvCell(rows[i],1), toku:gvCell(rows[i],3),
-                    tanto:gvCell(rows[i],4), route:gvCell(rows[i],8)||"(未設定)"});
+                    tanto:gvCell(rows[i],4), route:rt, ht:mikTs(gvCell(rows[i],10))});
     }
-    // 新着判定：初めて見た伝票に現在時刻を記録（初回起動時は全件を既存扱いにして誤検知を防ぐ）
-    const now=Date.now(), first=(Object.keys(mikSeen).length===0), keep={};
-    mikRows.forEach(r=>{ keep[r.no]=(mikSeen[r.no]!=null)?mikSeen[r.no]:(first?0:now); });
-    mikSeen=keep;                                  // 一覧から消えた伝票は保存対象から外す
-    try{ localStorage.setItem("mikSeen",JSON.stringify(mikSeen)); }catch(e){}
     const t=new Date();
     mikUpdAt=('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2);
     if(app==="miken") buildMiken();           // 表示中なら即反映
@@ -675,7 +674,7 @@ function buildMiken(){
   }
   // 表示（すべて／新着のみ）
   const ne=$("mikNew");ne.innerHTML="";
-  const newCnt=mikRows.filter(r=>isMikNew(r.no)).length;
+  const newCnt=mikRows.filter(r=>isMikNew(r)).length;
   [["すべて",false],["新着のみ("+newCnt+")",true]].forEach(([label,val])=>{
     const b=document.createElement("button");
     b.textContent=label;b.className=(mikNewOnly===val)?"on":"";
@@ -702,7 +701,8 @@ function buildMiken(){
   mikRows.forEach(r=>mikKnown[r.route]=1);            // 今回見たルートを記憶に追加
   if(mikSel)[...mikSel].forEach(r=>mikKnown[r]=1);    // 選択中のものは必ず残す
   try{ localStorage.setItem("mikKnown",JSON.stringify(mikKnown)); }catch(e){}
-  const routes=Object.keys(mikKnown).sort((a,b)=>mikKana(a).localeCompare(mikKana(b),'ja'));
+  const routes=Object.keys(mikKnown).filter(r=>MIK_ROUTE_HIDE.indexOf(r)<0)
+    .sort((a,b)=>mikKana(a).localeCompare(mikKana(b),'ja'));
   const re=$("mikRoutes");re.innerHTML="";
   const all=document.createElement("button");
   all.textContent="すべて";all.className=mikSel?"":"on";
@@ -719,14 +719,22 @@ function buildMiken(){
     re.appendChild(b); });
   renderMiken(base);
 }
-function isMikNew(no){ const t=mikSeen[no]; return !!t && (Date.now()-t)<MIK_NEW_MS; }
+/* 発伝日時「2026/09/11 16:18:56」→ epochミリ秒。
+   iOS Safari は new Date("YYYY/MM/DD hh:mm:ss") を解釈しないことがあるため手で分解する。 */
+function mikTs(s){
+  const m=String(s||"").match(/(\d{4})\/(\d{1,2})\/(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  return m?new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+(m[6]||0)).getTime():0;
+}
+// 新着＝発伝からMIK_NEW_MS以内。端末ではなく伝票の発行時刻が基準なので、
+// アプリを開き直しても別の端末で見ても同じ結果になる。
+function isMikNew(r){ return !!r.ht && (Date.now()-r.ht)<MIK_NEW_MS; }
 function renderMiken(base){
   let rows=base.filter(r=>!mikSel||mikSel.has(r.route));
-  if(mikNewOnly) rows=rows.filter(r=>isMikNew(r.no));
+  if(mikNewOnly) rows=rows.filter(isMikNew);
   // 新着を先頭へ（その後は 日付→ルート→伝票番号 順）
-  rows.sort((a,b)=>(isMikNew(b.no)?1:0)-(isMikNew(a.no)?1:0)
+  rows.sort((a,b)=>(isMikNew(b)?1:0)-(isMikNew(a)?1:0)
     ||a.day.localeCompare(b.day)||a.route.localeCompare(b.route,'ja')||a.no.localeCompare(b.no));
-  const newCnt=base.filter(r=>isMikNew(r.no)).length;
+  const newCnt=base.filter(isMikNew).length;
   $("mikSum").textContent="未検品 "+rows.length+" 件"+(newCnt?"（うち新着 "+newCnt+" 件）":"");
   // 検索バーに現在の条件を要約表示（ルートが多い時は件数だけ）
   const cond=[];
@@ -738,8 +746,8 @@ function renderMiken(base){
   $("mikCond").textContent=cond.join(" ／ ");
   $("mikUpd").textContent=mikUpdAt?("最終更新 "+mikUpdAt+"（1分ごとに自動更新）"):"";
   $("mikList").innerHTML = rows.length
-    ? rows.map(r=>'<div class="mitem'+(isMikNew(r.no)?' new':'')+'"><div class="mno">'
-        +(isMikNew(r.no)?'<span class="nbadge">新着</span>':'')+esc2(r.no)+'</div>'
+    ? rows.map(r=>'<div class="mitem'+(isMikNew(r)?' new':'')+'"><div class="mno">'
+        +(isMikNew(r)?'<span class="nbadge">新着</span>':'')+esc2(r.no)+'</div>'
         +'<div class="mtk">'+esc2(r.toku)+'<div style="font-weight:normal;font-size:11px;color:#90a4ae;">'+esc2(r.tanto)+'</div></div>'
         +'<div style="text-align:right;"><div class="mrt">'+esc2(r.route)+'</div>'
         +'<div class="mdy">'+mikDayLabel(r.day)+'</div></div></div>').join('')
