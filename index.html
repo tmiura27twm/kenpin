@@ -264,12 +264,27 @@ function core12(code){const g=extractGTIN(code);const d=g||normBC(code);
   if(d.length===13)return d.substring(0,12);
   return '';}
 
+// ★タイムアウトが無いと、応答が返ってこない時にPromiseが永久に解決せず、
+//   成功も失敗も表示されないまま固まる（検品の「記録しました」が出ない原因）。
+//   電波が切れかけている時や、Googleがスクリプト以外（エラーページ等）を返した時は
+//   onerror も鳴らないため、時間切れで必ず決着させる。
+const JSONP_TIMEOUT_MS=20000;
 function jsonp(params){return new Promise(res=>{
   const name='cb'+Date.now()+Math.floor(Math.random()*1000);
-  window[name]=d=>{delete window[name];s.remove();res(d);};
+  let settled=false;
+  const finish=v=>{
+    if(settled)return;                 // 二重解決を防ぐ（時間切れ後に応答が来た場合など）
+    settled=true;
+    clearTimeout(tm);
+    delete window[name];
+    if(s.parentNode)s.remove();
+    res(v);
+  };
+  window[name]=d=>finish(d);
   const s=document.createElement('script');
   s.src=APPS_URL+'?'+Object.entries(params).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&')+'&callback='+name;
-  s.onerror=()=>{delete window[name];s.remove();res({ok:false,error:'通信エラー'});};
+  s.onerror=()=>finish({ok:false,error:'通信エラー'});
+  const tm=setTimeout(()=>finish({ok:false,error:'タイムアウト'}),JSONP_TIMEOUT_MS);
   document.body.appendChild(s);});}
 function showLoad(){$("scan").style.display="none";$("kenpinResult").style.display="none";$("stockResult").style.display="none";$("loading").style.display="block";}
 function hideLoad(){$("loading").style.display="none";}
@@ -424,7 +439,11 @@ function openPicker(){
       b.onclick=()=>{ hme={cd:h.cd,nm:h.nm};
         try{ localStorage.setItem("kenpinMe",JSON.stringify(hme)); }catch(e){}
         $("hpick").style.display="none";showMe();
-        if(app==="kenpin") startScan();          // 選択後すぐ検品を続けられるように
+        if(app!=="kenpin") return;
+        // ★検品者未選択で記録を保留していた伝票があれば、選んだ時点で記録する。
+        //   以前はスキャンを再開するだけで、その伝票は記録されずに終わっていた。
+        if(data && !data._recorded && allScanned()){ data._recorded=true; recordDone(); return; }
+        startScan();                             // 選択後すぐ検品を続けられるように
       };
       g.appendChild(b); });
   }
@@ -519,25 +538,48 @@ function renderItems(){
     else{pill='<span class="pill y">'+got+'/'+need+'</span>';}
     html+='<tr class="'+cls+'"><td>'+it.商品名+'</td><td>'+it.ロット+'</td><td class="q">'+need+'</td><td class="q">'+pill+'</td></tr>';
   }$("tb").innerHTML=html;}
+// 明細が全て読み終わっているか（検品者を選び直した後の記録再開にも使う）
+function allScanned(){
+  return !!data && data.items.filter(it=>it.scannable)
+    .every(it=>(scanned[it.商品cd+it.ロット]||0)>=it.数量);
+}
 function checkDone(){
-  const all=data.items.filter(it=>it.scannable).every(it=>(scanned[it.商品cd+it.ロット]||0)>=it.数量);
+  const all=allScanned();
   $("done").style.display=all?"block":"none";
   if(all){beep(true);if(navigator.vibrate)navigator.vibrate([60,40,60,40,120]);
     if(!data._recorded){data._recorded=true;recordDone();}}}
+// 完了表示の下に出す1行（状態がひと目で分かるようにする）
+function doneNote(html){
+  $("done").innerHTML='✅ 検品完了（全て一致）'
+    +'<div style="font-size:13px;margin-top:6px;font-weight:normal;">'+html+'</div>';
+}
 // 検品完了→検品済ログへ自動記録（次回同じ伝票QRを読むと「検品済み」表示になる）
 async function recordDone(){
-  if(!hme){ openPicker(); data._recorded=false; return; }     // 検品者未選択なら記録しない
+  // ★検品者が未選択だと記録できない。以前はピッカーを出すだけで何も表示されず、
+  //   「記録しました」が出ないまま記録もされない状態になっていた。
+  if(!hme){
+    data._recorded=false;
+    doneNote('👤 <b>検品者を選ぶと記録します</b>（まだ記録されていません）');
+    openPicker();
+    return;
+  }
   const p={done:'1'+data.取引NO, toku:data.得意先||'', hcd:hme.cd, hnm:hme.nm};
   if(ACCESS_PIN)p.pin=ACCESS_PIN;
-  const j=await jsonp(p);
-  if(j.ok){
-    if(!dnLog)dnLog={};
-    dnLog[data.取引NO]=j.検品日時;
-    $("done").innerHTML='✅ 検品完了（全て一致）<div style="font-size:14px;margin-top:6px;font-weight:normal;">📝 検品済みを記録しました（'+j.検品日時+'）</div>';
-  }else{
-    data._recorded=false;   // 通信失敗→次の完了判定で再試行
-    $("done").innerHTML='✅ 検品完了（全て一致）<div style="font-size:13px;margin-top:6px;font-weight:normal;">⚠ 記録失敗（電波を確認。もう一度最後の商品を読むと再記録）</div>';
+  const no=data.取引NO;
+  for(let i=1;i<=3;i++){
+    doneNote('📝 記録中…'+(i>1?'（再試行 '+(i-1)+'/2）':''));
+    const j=await jsonp(p);
+    if(data.取引NO!==no) return;         // 途中で別の伝票を読んだ場合は表示を書き換えない
+    if(j&&j.ok){
+      if(!dnLog)dnLog={};
+      dnLog[no]=j.検品日時;
+      doneNote('📝 検品済みを記録しました（'+j.検品日時+'）');
+      return;
+    }
+    if(i<3) await new Promise(r=>setTimeout(r,1500*i));
   }
+  data._recorded=false;   // 通信失敗→次の完了判定で再試行
+  doneNote('⚠ <b>記録できませんでした</b>（電波を確認。もう一度最後の商品を読むと再記録）');
 }
 
 /* ===== 在庫検索 ===== */
