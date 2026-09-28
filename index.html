@@ -553,8 +553,64 @@ function doneNote(html){
   $("done").innerHTML='✅ 検品完了（全て一致）'
     +'<div style="font-size:13px;margin-top:6px;font-weight:normal;">'+html+'</div>';
 }
-// 検品完了→検品済ログへ自動記録（次回同じ伝票QRを読むと「検品済み」表示になる）
-async function recordDone(){
+/* ===== 検品済みの記録（送信待ち行列）=====
+   サーバーへの記録は1回あたり1〜1.5秒かかる。完了のたびに待っていると
+   次の伝票へ移るのが遅くなるので、画面には即「記録しました」と出し、
+   送信は裏側で行う。送信待ちは端末に保存するので、伝票を切り替えても、
+   アプリを閉じても消えない。失敗したら自動で送り直す。 */
+const DONE_Q_KEY="doneQueue";
+let doneQ=(()=>{ try{ return JSON.parse(localStorage.getItem(DONE_Q_KEY)||"[]"); }catch(e){ return []; } })();
+let qBusy=false, qTimer=null;
+function saveQ(){ try{ localStorage.setItem(DONE_Q_KEY,JSON.stringify(doneQ)); }catch(e){} }
+function nowStamp(){
+  const d=new Date(),p=n=>('0'+n).slice(-2);
+  return d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+// 未送信が残っている間だけ画面下に件数を出す（黙って溜まらないように）
+function qBadge(){
+  let b=$("qbadge");
+  if(!b){
+    b=document.createElement("div");b.id="qbadge";
+    b.style.cssText="position:fixed;left:8px;bottom:8px;z-index:60;background:#b71c1c;color:#fff;"
+      +"padding:6px 10px;border-radius:14px;font-size:12px;box-shadow:0 2px 6px rgba(0,0,0,.3);display:none";
+    b.onclick=()=>flushQ(true);
+    document.body.appendChild(b);
+  }
+  if(doneQ.length){ b.textContent='📤 未送信 '+doneQ.length+'件（タップで再送）'; b.style.display="block"; }
+  else b.style.display="none";
+}
+// 送信待ちを順に送る。失敗したら中断して後で再試行（順番を保つ）
+async function flushQ(manual){
+  if(qBusy) return;
+  qBusy=true;
+  try{
+    while(doneQ.length){
+      const e=doneQ[0];
+      const p={done:'1'+e.no, toku:e.toku||'', hcd:e.hcd, hnm:e.hnm};
+      if(ACCESS_PIN)p.pin=ACCESS_PIN;
+      const j=await jsonp(p);
+      if(j&&j.ok){
+        doneQ.shift(); saveQ();
+        if(!dnLog)dnLog={};
+        dnLog[e.no]=j.検品日時;
+        if(data&&data.取引NO===e.no&&allScanned()) doneNote('📝 検品済みを記録しました（'+j.検品日時+'）');
+      }else{
+        e.tries=(e.tries||0)+1; saveQ();
+        if(data&&data.取引NO===e.no&&allScanned())
+          doneNote('⚠ <b>送信待ち</b>（電波を確認。自動で送り直します）');
+        break;
+      }
+    }
+  } finally {
+    qBusy=false; qBadge();
+    clearTimeout(qTimer);
+    if(doneQ.length) qTimer=setTimeout(()=>flushQ(),15000);   // 残っていれば15秒後に再試行
+  }
+}
+window.addEventListener("online",()=>flushQ());
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) flushQ(); });
+// 検品完了→検品済ログへ記録（次回同じ伝票QRを読むと「検品済み」表示になる）
+function recordDone(){
   // ★検品者が未選択だと記録できない。以前はピッカーを出すだけで何も表示されず、
   //   「記録しました」が出ないまま記録もされない状態になっていた。
   if(!hme){
@@ -563,23 +619,13 @@ async function recordDone(){
     openPicker();
     return;
   }
-  const p={done:'1'+data.取引NO, toku:data.得意先||'', hcd:hme.cd, hnm:hme.nm};
-  if(ACCESS_PIN)p.pin=ACCESS_PIN;
-  const no=data.取引NO;
-  for(let i=1;i<=3;i++){
-    doneNote('📝 記録中…'+(i>1?'（再試行 '+(i-1)+'/2）':''));
-    const j=await jsonp(p);
-    if(data.取引NO!==no) return;         // 途中で別の伝票を読んだ場合は表示を書き換えない
-    if(j&&j.ok){
-      if(!dnLog)dnLog={};
-      dnLog[no]=j.検品日時;
-      doneNote('📝 検品済みを記録しました（'+j.検品日時+'）');
-      return;
-    }
-    if(i<3) await new Promise(r=>setTimeout(r,1500*i));
-  }
-  data._recorded=false;   // 通信失敗→次の完了判定で再試行
-  doneNote('⚠ <b>記録できませんでした</b>（電波を確認。もう一度最後の商品を読むと再記録）');
+  const no=data.取引NO, ts=nowStamp();
+  if(!dnLog)dnLog={};
+  dnLog[no]=ts;                                   // 端末側は即「検品済み」扱いにする
+  doneQ.push({no:no, toku:data.得意先||'', hcd:hme.cd, hnm:hme.nm, tries:0});
+  saveQ(); qBadge();
+  doneNote('📝 検品済みを記録しました（'+ts+'）');  // 送信完了を待たずに表示＝次の伝票へすぐ移れる
+  flushQ();
 }
 
 /* ===== 在庫検索 ===== */
@@ -1175,6 +1221,8 @@ async function toggleTorch(){
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
 // 起動直後から在庫データを先読み（在庫検索を開く前に準備完了→最初のスキャンから即表示）
 preloadStock();
+// 前回アプリを閉じた時に送りきれなかった検品記録があれば、起動時に送る
+qBadge(); if(doneQ.length) flushQ();
 
 $("btnScan").onclick=startScan;
 $("btnTorch").onclick=toggleTorch;
